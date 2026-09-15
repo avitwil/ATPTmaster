@@ -58,11 +58,18 @@ class RunContext:
     store: Any
     project_dir: Path
     dry_run: bool = False
+    reasoner: Any = None
 
     def emit(self, kind: str, message: str, level: str = "info",
              phase: str | None = None, module: str | None = None,
              data: dict | None = None) -> None:
         self.store.add_event(self.engagement["id"], phase, module, level, kind, message, data)
+
+    def reason(self, prompt: str, phase: str) -> "str | None":
+        if self.reasoner is None:
+            return None
+        res = self.reasoner.reason(prompt, phase)
+        return res.text if res else None
 
 
 class Module:
