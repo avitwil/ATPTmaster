@@ -1,99 +1,94 @@
 # ATPTmaster
 
-Modular autonomous pentest framework for Kali. Start with the **core**: [docs/CORE.md](docs/CORE.md). Vendored integration tools: [tools/MANIFEST.md](tools/MANIFEST.md).
+A modular, autonomous **penetration-testing framework** for Kali Linux. Integration-first:
+it extracts and adapts the best of existing open-source AI-security tools into one unified,
+orchestrator-agnostic engine with a web console.
 
-The section below documents the standalone N8N recon node (one driver of the core).
+- **Zero-dependency core** — pure Python stdlib. No pip install. Runs on any Kali box.
+- **Modular** — drop-in capability modules, auto-registered from `modules/<id>/`.
+- **Three run modes** — `step` (one module at a time), `semi` (auto until an intrusive step, then pause for approval), `full` (auto).
+- **Bring your own LLM** — connect one or more models (hosted API key, an existing CLI login, or a local Ollama). Each operator uses their own keys; nothing proprietary is bundled.
+- **Reporting** — a final node renders a **PTES-compliant Markdown** report (CVSS, OWASP, remediation, raw evidence) you can download.
 
----
-
-# ATPTmaster — Phase 1: Nebula-style Recon Node
-
-N8N orchestrates a thin CLI-wrapper (`recon_runner.sh`) that chains standard
-recon tools, normalizes their output into one canonical schema, and writes it to
-the **State Tree** (Postgres). This is the data source every later phase consumes.
+## Pipeline
 
 ```
-Manual Trigger → Engagement Config → Recon Runner (Execute Command)
-              → Normalize (Code) → Persist Assets (Postgres) → Done
+scope → recon → map → exploit → validate → report
 ```
 
-## Files
-| Path | Role |
-|---|---|
-| `db/schema.sql` | State Tree — `engagements`, `assets`, `findings` (the contract) |
-| `recon/scope.example.json` | Scope allow/deny list — enforced at the tool layer |
-| `recon/recon_runner.sh` | Nebula-style wrapper: subfinder → naabu → nmap → httpx → ffuf |
-| `recon/nmap2json.py` | nmap XML → JSONL bridge |
-| `n8n/nodes/normalize.js` | Canonical mapping (source for the Normalize node) |
-| `n8n/workflows/p1_recon.json` | Importable N8N workflow |
+Modules self-sequence on tokens (`target → asset → finding → validated_finding`). Shipped modules:
 
-## Prerequisites (Kali)
+| module | phase | role | extracted from |
+|---|---|---|---|
+| `recon_nebula` | recon | subfinder→naabu→nmap→httpx→ffuf wrapper, scope-enforced | berylliumsec/nebula |
+| `map_ptt` | map | decompose assets → prioritized candidate findings (PTT) | GreyDGL/PentestGPT |
+| `validate_xalgorix` | validate | verification-first: promote high-confidence, drop false-positives | xalgorix/xalgorix |
+| `report_ptes` | report | PTES Markdown report | native |
+
+> Intrusive live exploitation (SSH/shell agents) is intentionally **not** enabled in this
+> shareable build — the approval gate exists, but autonomous exploitation ships as a separate,
+> explicitly-enabled module.
+
+## Quick start
+
 ```bash
-sudo apt install -y jq python3 nmap seclists
-# ProjectDiscovery stack:
-go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
-go install -v github.com/projectdiscovery/naabu/v2/cmd/naabu@latest
-go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
-go install -v github.com/ffuf/ffuf/v2@latest
-```
-Confirm `httpx -version` reports **projectdiscovery** (not the Python httpx).
+# 1. launch the console (stdlib http.server, binds to 127.0.0.1)
+python3 -m atpt serve            # → http://127.0.0.1:8787
 
-## Deploy
+# 2. in the browser: click "Load demo" (no tools needed) → Run full → Download report
+```
+
+Or drive it from the CLI:
+
 ```bash
-sudo mkdir -p /opt/atpt/recon
-sudo cp recon/recon_runner.sh recon/nmap2json.py /opt/atpt/recon/
-sudo cp recon/scope.example.json /opt/atpt/recon/scope.json   # then edit for the real engagement
-sudo chmod +x /opt/atpt/recon/recon_runner.sh
+python3 -m atpt init --scope recon/scope.example.json --mode semi
+python3 -m atpt run --engagement <id> --mode semi
+python3 -m atpt status --engagement <id>
+python3 -m atpt approve <module> --engagement <id>   # release a gated intrusive step
 ```
-> Runs assume **N8N native on Kali** so Execute Command sees host tools. If N8N is
-> in Docker: bind-mount `/opt/atpt`, install the tools in the N8N image, and run
-> the container with host or a scoped bridge network.
 
-## Database
+Run the tests (stdlib `unittest`, nothing installed or executed externally):
+
 ```bash
-createdb atpt 2>/dev/null; psql atpt -f db/schema.sql
-psql atpt -c "INSERT INTO engagements(id,name) VALUES ('ACME-2026-Q3','ACME Q3') ON CONFLICT DO NOTHING;"
+python3 -m unittest discover -s tests
 ```
 
-## Import & wire the workflow
-1. N8N → **Import from File** → `n8n/workflows/p1_recon.json`.
-2. Create a **Postgres credential** (`atpt` DB) and bind it on the **Persist Assets** node (imported placeholder id `REPLACE_ME`).
-3. Edit **Engagement Config** to your `engagement_id` / `targets` / `tools`.
+## Web console
 
-### The one version-sensitive node: Persist Assets
-The node ships as `executeQuery` with 16 positional params via `options.queryReplacement`.
-If your Postgres-node version names that field differently, paste this ordered array
-into its **Query Parameters** box:
+`atpt serve` opens a single-page console:
+
+1. **Define scope & target** (required before any run) — or **Load demo**.
+2. **Chat control** — `run` / `plan` / `status` / `approve <module>` / `report`, plus buttons.
+3. **Findings** table and an **attack-direction tree** (the PTT, grouped by domain, ranked by severity).
+4. **Download report** — the PTES Markdown deliverable.
+
+## Connecting an LLM (optional, for adaptive reasoning)
+
+Reasoning modules call a **provider ladder** — try providers in your preference order, fall
+back to the next on refusal/error (ending at a local model), never rewriting a prompt to defeat
+a model's guardrails. Configure per engagement:
+
+```json
+"reasoning": {
+  "providers": {
+    "my_claude": { "backend": "http_api", "api": "anthropic", "model": "claude-opus-5", "key_env": "ANTHROPIC_API_KEY" },
+    "my_openai": { "backend": "http_api", "api": "openai",    "model": "gpt-5",         "key_env": "OPENAI_API_KEY" },
+    "claude_cli":{ "backend": "cli",      "cmd": "claude -p" },
+    "local":     { "backend": "ollama",   "model": "llama3.1" }
+  },
+  "preference": ["my_claude", "my_openai", "local"],
+  "policy": { "map": "any", "report": "hosted_ok" }
+}
 ```
-{{ [$json.engagement_id, $json.asset_type, $json.value, $json.host, $json.ip, $json.port,
-    $json.protocol, $json.service, $json.product, $json.version, $json.http_status,
-    $json.http_title, $json.tech, $json.url, $json.source_tool, $json.raw] }}
-```
-Or switch it to **operation: Insert**, table `assets`, *Map Automatically* — the
-normalized item keys already match the columns (you lose upsert, dedup handles repeats).
 
-## Run & verify
-Execute the workflow, then:
-```bash
-psql atpt -c "SELECT asset_type, count(*) FROM assets
-              WHERE engagement_id='ACME-2026-Q3' GROUP BY 1 ORDER BY 2 DESC;"
-```
+API keys are read from **environment variables** at call time — never stored, logged, or placed in a URL.
 
-## The canonical contract (`assets`)
-`asset_type ∈ {subdomain, service, web_endpoint, web_path}`; `value` is the unique
-identity; `raw` keeps the full native tool record; `tech` is JSONB. Every downstream
-phase reads assets and writes `findings` — same shape, so the Router and Validator
-stay tool-agnostic.
+## Security notes
 
-## Safety model
-Scope is enforced **inside `recon_runner.sh`**, not just in N8N: every seed target,
-every discovered subdomain, and every URL is checked against `scope.json`
-(`out_of_scope` wins) before any tool touches it. Out-of-scope input is skipped and
-logged to stderr. This holds even if the workflow is triggered directly.
+- The console binds to `127.0.0.1` by default — it is an operator tool, not a public service. Exposing it (`--host 0.0.0.0`) has no authentication; don't.
+- Only test systems you are **authorized** to test. Scope is enforced at the recon tool layer and required before any run.
 
-## Upgrade path (later)
-- Explode the single runner into **one Execute Command node per tool** for per-tool
-  retries/visibility (the script is already modular via `--tools`).
-- Add an N8N **IF scope-gate** using `recon_runner.sh --check-scope <value>`.
-- Swap Manual Trigger → **Webhook/Form/Cron**; add a **Wait** approval gate before ffuf.
-- Feed `assets` into **Phase 2 (PentestGPT PTT Router)** to fan out per domain.
+## Architecture
+
+See [`docs/CORE.md`](docs/CORE.md) for the engine, the module contract, and the reasoning layer.
+Design specs and implementation plans live under [`docs/superpowers/`](docs/superpowers/).

@@ -87,6 +87,10 @@ class SQLiteStore:
         self.cx.execute("UPDATE engagements SET mode=? WHERE id=?", (mode, eid))
         self.cx.commit()
 
+    def list_engagements(self) -> list[dict]:
+        return [dict(r) for r in self.cx.execute(
+            "SELECT id, name, status, mode, created_at FROM engagements ORDER BY created_at DESC, id")]
+
     # --- assets / findings ---------------------------------------------------
     def upsert_asset(self, eid, a: dict):
         vals = [a.get(c) for c in _ASSET_COLS]
@@ -122,6 +126,19 @@ class SQLiteStore:
             return self.cx.execute("SELECT count(*) FROM findings WHERE engagement_id=? AND status=?",
                                    (eid, status)).fetchone()[0]
         return self.cx.execute("SELECT count(*) FROM findings WHERE engagement_id=?", (eid,)).fetchone()[0]
+
+    def list_findings(self, eid, status=None) -> list[dict]:
+        if status:
+            rows = self.cx.execute("SELECT * FROM findings WHERE engagement_id=? AND status=? ORDER BY id",
+                                   (eid, status))
+        else:
+            rows = self.cx.execute("SELECT * FROM findings WHERE engagement_id=? ORDER BY id", (eid,))
+        return [dict(r) for r in rows]
+
+    def set_finding_status(self, eid, finding_id, status):
+        self.cx.execute("UPDATE findings SET status=? WHERE engagement_id=? AND id=?",
+                        (status, eid, finding_id))
+        self.cx.commit()
 
     def asset_type_counts(self, eid) -> list[tuple]:
         return [tuple(r) for r in self.cx.execute(
