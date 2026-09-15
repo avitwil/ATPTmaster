@@ -142,6 +142,12 @@ def cmd_approve(args):
     return 0
 
 
+def cmd_serve(args):
+    from .web import serve
+    serve(_project_dir(), port=args.port, host=args.host)
+    return 0
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="atpt", description="ATPTmaster core driver")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -182,6 +188,11 @@ def main(argv=None):
     pa.add_argument("--engagement", required=True)
     pa.add_argument("--deny", action="store_true")
     pa.set_defaults(func=cmd_approve)
+
+    pw = sub.add_parser("serve", help="launch the web console (stdlib http.server)")
+    pw.add_argument("--port", type=int, default=8787)
+    pw.add_argument("--host", default="127.0.0.1")
+    pw.set_defaults(func=cmd_serve)
 
     args = p.parse_args(argv)
     return args.func(args)

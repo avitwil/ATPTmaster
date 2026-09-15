@@ -87,6 +87,10 @@ class SQLiteStore:
         self.cx.execute("UPDATE engagements SET mode=? WHERE id=?", (mode, eid))
         self.cx.commit()
 
+    def list_engagements(self) -> list[dict]:
+        return [dict(r) for r in self.cx.execute(
+            "SELECT id, name, status, mode, created_at FROM engagements ORDER BY created_at DESC, id")]
+
     # --- assets / findings ---------------------------------------------------
     def upsert_asset(self, eid, a: dict):
         vals = [a.get(c) for c in _ASSET_COLS]
