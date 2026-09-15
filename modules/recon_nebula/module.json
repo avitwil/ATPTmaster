@@ -1,0 +1,13 @@
+{
+  "id": "recon_nebula",
+  "name": "Nebula-style Recon",
+  "phase": "recon",
+  "entrypoint": "module:ReconNebula",
+  "provides": ["asset"],
+  "consumes": ["target"],
+  "intrusive": false,
+  "run_modes": ["step", "semi", "full"],
+  "enabled": true,
+  "extracted_from": "berylliumsec/nebula@e795eaa",
+  "description": "Wraps subfinder/naabu/nmap/httpx/ffuf via recon_runner.sh; normalizes to canonical assets."
+}

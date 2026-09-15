@@ -1,0 +1,152 @@
+{
+  "name": "ATPT \u2014 P1 Recon (Nebula-style)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "n1",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Engagement config \u2014 edit these, or replace this node with a Webhook/Form/Cron trigger.\nreturn [{ json: {\n  engagement_id: \"ACME-2026-Q3\",\n  scope_file:    \"/opt/atpt/recon/scope.json\",\n  tools:         \"subfinder,naabu,nmap,httpx\",\n  targets:       [\"example.com\"],\n  rate:          150\n}}];\n"
+      },
+      "id": "n2",
+      "name": "Engagement Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=/opt/atpt/recon/recon_runner.sh --engagement {{$json.engagement_id}} --scope {{$json.scope_file}} --tools {{$json.tools}} --rate {{$json.rate}} {{ $json.targets.map(t => '--target ' + t).join(' ') }}"
+      },
+      "id": "n3",
+      "name": "Recon Runner",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ATPTmaster :: Phase 1 Normalizer  (N8N Code node, \"Run Once for All Items\")\n// IN : item(s) with json.stdout = JSONL from recon_runner.sh\n// OUT: one deduped item per canonical asset, keys == public.assets columns.\nconst lines = [];\nfor (const item of $input.all()) {\n  const out = item.json.stdout ?? item.json.data ?? '';\n  for (const l of String(out).split('\\n')) {\n    const s = l.trim();\n    if (!s) continue;\n    try { lines.push(JSON.parse(s)); } catch (_) { /* skip log/non-JSON lines */ }\n  }\n}\nconst host_of = (v) => v ? String(v).replace(/^\\w+:\\/\\//, '').split('/')[0].split(':')[0] : null;\nconst norm = (r) => {\n  const base = {\n    engagement_id: r._engagement_id ?? null, source_tool: r._tool ?? 'unknown', raw: r,\n    asset_type: null, value: null, host: null, ip: null, port: null, protocol: null,\n    service: null, product: null, version: null, http_status: null, http_title: null,\n    tech: null, url: null,\n  };\n  switch (r._tool) {\n    case 'subfinder':\n      return { ...base, asset_type: 'subdomain', host: r.host ?? r.input ?? null,\n               value: r.host ?? r.input ?? null };\n    case 'naabu':\n      return { ...base, asset_type: 'service', host: r.host ?? r.ip ?? null, ip: r.ip ?? null,\n               port: r.port ?? null, protocol: 'tcp', value: `${r.host ?? r.ip}:${r.port}` };\n    case 'nmap':\n      return { ...base, asset_type: 'service', host: r.host ?? r.ip ?? null, ip: r.ip ?? null,\n               port: r.port ?? null, protocol: r.protocol ?? 'tcp', service: r.service ?? null,\n               product: r.product ?? null, version: r.version ?? null,\n               value: `${r.host ?? r.ip}:${r.port}/${r.service ?? ''}` };\n    case 'httpx':\n      return { ...base, asset_type: 'web_endpoint', host: r.host ?? host_of(r.input) ?? null,\n               ip: (Array.isArray(r.a) ? r.a[0] : null), port: r.port ? Number(r.port) : null,\n               protocol: 'tcp', service: r.scheme ?? null,\n               http_status: r.status_code ?? null, http_title: r.title ?? null,\n               tech: Array.isArray(r.tech) ? r.tech : (r.technologies ?? null),\n               url: r.url ?? null, value: r.url ?? null };\n    case 'ffuf':\n      return { ...base, asset_type: 'web_path', host: host_of(r.base), url: r.url ?? null,\n               http_status: r.status ?? null, value: r.url ?? null };\n    default:\n      return { ...base, asset_type: 'unknown', value: JSON.stringify(r).slice(0, 200) };\n  }\n};\nconst seen = new Set(); const items = [];\nfor (const r of lines) {\n  const a = norm(r);\n  if (!a.value) continue;\n  const key = `${a.asset_type}|${a.value}`;\n  if (seen.has(key)) continue;\n  seen.add(key);\n  items.push({ json: { ...a,\n    tech: a.tech ? JSON.stringify(a.tech) : null,\n    raw:  a.raw  ? JSON.stringify(a.raw)  : null } });\n}\nreturn items;\n"
+      },
+      "id": "n4",
+      "name": "Normalize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO assets (engagement_id, asset_type, value, host, ip, port, protocol, service, product, version, http_status, http_title, tech, url, source_tool, raw) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15,$16::jsonb) ON CONFLICT (engagement_id, asset_type, value) DO UPDATE SET host=EXCLUDED.host, ip=EXCLUDED.ip, port=EXCLUDED.port, protocol=EXCLUDED.protocol, service=EXCLUDED.service, product=EXCLUDED.product, version=EXCLUDED.version, http_status=EXCLUDED.http_status, http_title=EXCLUDED.http_title, tech=EXCLUDED.tech, url=EXCLUDED.url, source_tool=EXCLUDED.source_tool, raw=EXCLUDED.raw, last_seen=now();",
+        "options": {
+          "queryReplacement": "={{ [$json.engagement_id, $json.asset_type, $json.value, $json.host, $json.ip, $json.port, $json.protocol, $json.service, $json.product, $json.version, $json.http_status, $json.http_title, $json.tech, $json.url, $json.source_tool, $json.raw] }}"
+        }
+      },
+      "id": "n5",
+      "name": "Persist Assets",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1100,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME",
+          "name": "ATPT Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "n6",
+      "name": "Done",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Engagement Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Engagement Config": {
+      "main": [
+        [
+          {
+            "node": "Recon Runner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recon Runner": {
+      "main": [
+        [
+          {
+            "node": "Normalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize": {
+      "main": [
+        [
+          {
+            "node": "Persist Assets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Assets": {
+      "main": [
+        [
+          {
+            "node": "Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}

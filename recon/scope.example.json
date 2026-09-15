@@ -1,0 +1,8 @@
+{
+  "engagement": "ACME-2026-Q3",
+  "in_scope_domains": ["example.com"],
+  "in_scope_cidrs": ["203.0.113.0/24"],
+  "out_of_scope": ["blog.example.com", "status.example.com"],
+  "max_rate": 150,
+  "notes": "Authorized per signed RoE. Anything not matched here is REFUSED by recon_runner.sh before any packet is sent."
+}
