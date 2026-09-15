@@ -33,6 +33,18 @@ exist, so the pipeline self-sequences.
 Dry-run (`--dry-run`) plans and logs what *would* run and **never mutates the State Tree** —
 so you can preview a whole engagement on a machine with none of the tools installed.
 
+## Reasoning layer (`atpt/reasoning.py`)
+Modules that reason (not just wrap a CLI) call `ctx.reason(prompt, phase)`. It runs
+a **provider ladder** from the engagement `config.reasoning`: registered providers
+(`cli` / `http_api` / `ollama`), tried in `preference` order, filtered by a per-phase
+`policy` (`any` / `hosted_ok` / `local_only`). On a **refusal or error** it advances
+to the next provider — ultimately a local model — never rewriting the prompt to defeat
+a model's guardrails. Exhaustion returns `None`, so a module falls back to deterministic
+logic. API keys are read from env vars (`key_env`) at call time; never stored.
+
+The `map_ptt` module is the first consumer: it maps assets to prioritized **candidate
+findings** with deterministic rules, then optionally enriches via `ctx.reason`.
+
 ## Adding a module (the extraction pattern)
 1. `mkdir modules/<id>` with a `module.json` (id, phase, consumes/provides, intrusive, extracted_from).
 2. Add `module.py` with a `Module` subclass implementing `run(ctx) -> ModuleResult`.
