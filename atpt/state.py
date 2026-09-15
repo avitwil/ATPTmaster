@@ -123,6 +123,19 @@ class SQLiteStore:
                                    (eid, status)).fetchone()[0]
         return self.cx.execute("SELECT count(*) FROM findings WHERE engagement_id=?", (eid,)).fetchone()[0]
 
+    def list_findings(self, eid, status=None) -> list[dict]:
+        if status:
+            rows = self.cx.execute("SELECT * FROM findings WHERE engagement_id=? AND status=? ORDER BY id",
+                                   (eid, status))
+        else:
+            rows = self.cx.execute("SELECT * FROM findings WHERE engagement_id=? ORDER BY id", (eid,))
+        return [dict(r) for r in rows]
+
+    def set_finding_status(self, eid, finding_id, status):
+        self.cx.execute("UPDATE findings SET status=? WHERE engagement_id=? AND id=?",
+                        (status, eid, finding_id))
+        self.cx.commit()
+
     def asset_type_counts(self, eid) -> list[tuple]:
         return [tuple(r) for r in self.cx.execute(
             "SELECT asset_type, count(*) FROM assets WHERE engagement_id=? GROUP BY 1 ORDER BY 2 DESC", (eid,))]
