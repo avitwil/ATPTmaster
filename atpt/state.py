@@ -113,6 +113,10 @@ class SQLiteStore:
     def count_assets(self, eid) -> int:
         return self.cx.execute("SELECT count(*) FROM assets WHERE engagement_id=?", (eid,)).fetchone()[0]
 
+    def list_assets(self, eid) -> list[dict]:
+        return [dict(r) for r in self.cx.execute(
+            "SELECT * FROM assets WHERE engagement_id=? ORDER BY id", (eid,))]
+
     def count_findings(self, eid, status=None) -> int:
         if status:
             return self.cx.execute("SELECT count(*) FROM findings WHERE engagement_id=? AND status=?",

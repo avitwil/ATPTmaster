@@ -1,0 +1,13 @@
+{
+  "id": "map_ptt",
+  "name": "PTT Attack-Surface Router",
+  "phase": "map",
+  "entrypoint": "module:MapPTT",
+  "consumes": ["asset"],
+  "provides": ["finding"],
+  "intrusive": false,
+  "run_modes": ["step", "semi", "full"],
+  "enabled": true,
+  "extracted_from": "GreyDGL/PentestGPT@e8b1bb7",
+  "description": "Decomposes assets into prioritized candidate findings (PTT); deterministic rules + optional reasoning-ladder enrichment."
+}

@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 
 from .module import PHASES, Module, RunContext
+from .reasoning import ReasoningLadder
 
 
 class Orchestrator:
@@ -54,8 +55,14 @@ class Orchestrator:
         return mode == "semi" and mod.manifest.intrusive
 
     def _ctx(self, eng: dict, dry_run: bool) -> RunContext:
+        cfg = json.loads(eng.get("config") or "{}")
+        reasoner = ReasoningLadder(
+            cfg.get("reasoning"),
+            emit=lambda kind, msg, lvl: self.store.add_event(
+                eng["id"], None, None, lvl, kind, msg, None))
         return RunContext(engagement=eng, scope=json.loads(eng.get("scope") or "{}"),
-                          store=self.store, project_dir=self.project_dir, dry_run=dry_run)
+                          store=self.store, project_dir=self.project_dir,
+                          dry_run=dry_run, reasoner=reasoner)
 
     def plan(self, eng: dict, mode: str) -> list[dict]:
         rows = []
