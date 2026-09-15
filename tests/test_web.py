@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from atpt.state import SQLiteStore
-from atpt.web import WebApp
+from atpt.web import WebApp, valid_eid
 
 
 class WebTest(unittest.TestCase):
@@ -94,3 +94,19 @@ class WebTest(unittest.TestCase):
     def test_missing_engagement_404(self):
         st, _, _, _ = self._get("/api/status", eng="nope")
         self.assertEqual(st, 404)
+
+    def test_valid_eid_rejects_traversal_and_junk(self):
+        for bad in ("", ".", "..", "../etc", "a/b", "a\\b", "x" * 65, "a b", "a.b"):
+            self.assertFalse(valid_eid(bad), bad)
+        for ok in ("acme-2026", "demo", "E1_test"):
+            self.assertTrue(valid_eid(ok), ok)
+
+    def test_create_rejects_path_traversal_id(self):
+        st, _, body, _ = self._post("/api/engagement", {
+            "engagement": "../../../../tmp/pwn", "scope": {"in_scope_domains": ["x.com"]}})
+        self.assertEqual(st, 400)
+
+    def test_bad_json_body_is_400(self):
+        st, _, body, _ = self.app.handle("POST", "/api/engagement", {}, b"{not json")
+        self.assertEqual(st, 400)
+        self.assertIn("invalid JSON", json.loads(body)["error"])

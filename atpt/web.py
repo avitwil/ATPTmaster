@@ -9,6 +9,7 @@ Binds to 127.0.0.1 by default — this is an operator console, not a public endp
 from __future__ import annotations
 import importlib.util
 import json
+import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
@@ -18,6 +19,19 @@ from .registry import discover
 from .state import SQLiteStore
 
 _SEV_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+# Engagement ids become filesystem path segments (var/reports/<id>.md) and scope
+# filenames, so they are strictly whitelisted — no slashes, no dot-only ids.
+_VALID_EID = re.compile(r"[A-Za-z0-9_-]{1,64}$")
+
+
+def valid_eid(eid: str) -> bool:
+    return bool(eid) and eid not in (".", "..") and _VALID_EID.match(eid) is not None
+
+
+def _h(s) -> str:
+    """Escape user-derived text placed into an HTML (innerHTML) reply string."""
+    return (str(s).replace("&", "&amp;").replace("<", "&lt;")
+            .replace(">", "&gt;").replace('"', "&quot;"))
 
 
 def _load_report_builder(project_dir: Path):
@@ -86,28 +100,42 @@ class WebApp:
     def handle(self, method, path, query, body):
         try:
             return self._route(method, path, query, body)
-        except Exception as exc:  # never 500-crash the console
-            return self._json(500, {"error": str(exc)})
+        except Exception:  # never 500-crash the console; don't leak internals
+            import traceback
+            traceback.print_exc()
+            return self._json(500, {"error": "internal error"})
+
+    def _report_builder(self):
+        if getattr(self, "_rb", None) is None:
+            self._rb = _load_report_builder(self.project_dir)
+        return self._rb
 
     def _route(self, method, path, query, body):
         if method == "GET" and path in ("/", "/index.html"):
             return 200, "text/html; charset=utf-8", INDEX_HTML.encode(), {}
 
+        data = {}
+        if method == "POST" and body:
+            try:
+                data = json.loads(body)
+            except Exception:
+                return self._json(400, {"error": "invalid JSON body"})
+            if not isinstance(data, dict):
+                return self._json(400, {"error": "JSON body must be an object"})
+
         if path == "/api/engagements" and method == "GET":
             return self._json(200, {"engagements": self._store().list_engagements()})
-
         if path == "/api/engagement" and method == "POST":
-            return self._create_engagement(json.loads(body or b"{}"))
-
+            return self._create_engagement(data)
         if path == "/api/demo" and method == "POST":
             return self._create_demo()
 
-        eid = query.get("eng") or (json.loads(body or b"{}").get("eng") if method == "POST" else None)
+        eid = query.get("eng") or data.get("eng")
         if path.startswith("/api/") and not eid:
             return self._json(400, {"error": "missing 'eng' (engagement id)"})
         store = self._store()
         if not store.get_engagement(eid):
-            return self._json(404, {"error": f"no engagement '{eid}'"})
+            return self._json(404, {"error": "no such engagement"})
 
         if path == "/api/status" and method == "GET":
             return self._json(200, self._status_obj(store, eid))
@@ -117,32 +145,29 @@ class WebApp:
         if path == "/api/tree" and method == "GET":
             return self._json(200, self._tree(store, eid))
         if path == "/api/run" and method == "POST":
-            data = json.loads(body or b"{}")
             mode = data.get("mode") or store.get_engagement(eid)["mode"]
             res = self._orch(store).run(store.get_engagement(eid), mode, dry_run=bool(data.get("dry_run")))
             return self._json(200, {"result": res, "status": self._status_obj(store, eid)})
         if path == "/api/approve" and method == "POST":
-            data = json.loads(body or b"{}")
             store.resolve_approval(eid, data.get("module"), "approved")
             store.add_event(eid, None, data.get("module"), "info", "approval_resolved",
                             f"module '{data.get('module')}' approved via UI", None)
             return self._json(200, {"status": self._status_obj(store, eid)})
         if path == "/api/chat" and method == "POST":
-            return self._chat(store, eid, json.loads(body or b"{}").get("message", ""))
+            return self._chat(store, eid, data.get("message", ""))
         if path == "/api/report" and method == "GET":
-            md = _load_report_builder(self.project_dir)(store, eid, self.project_dir)
-            safe = "".join(c for c in eid if c.isalnum() or c in "-_") or "engagement"
+            md = self._report_builder()(store, eid, self.project_dir)
             return (200, "text/markdown; charset=utf-8", md.encode(),
-                    {"Content-Disposition": f'attachment; filename="{safe}-ptes-report.md"'})
+                    {"Content-Disposition": f'attachment; filename="{eid}-ptes-report.md"'})
 
-        return self._json(404, {"error": f"no route {method} {path}"})
+        return self._json(404, {"error": "no such route"})
 
     def _create_engagement(self, data):
         eid = (data.get("engagement") or "").strip()
         scope = data.get("scope") or {}
         has_target = bool(scope.get("in_scope_domains") or scope.get("in_scope_cidrs"))
-        if not eid:
-            return self._json(400, {"error": "engagement id is required"})
+        if not valid_eid(eid):
+            return self._json(400, {"error": "engagement id must be 1-64 chars of [A-Za-z0-9_-]"})
         if not has_target:
             return self._json(400, {"error": "scope must define at least one in-scope domain or CIDR (target required)"})
         store = self._store()
@@ -201,7 +226,7 @@ class WebApp:
                 store.resolve_approval(eid, parts[1], "approved")
                 store.add_event(eid, None, parts[1], "info", "approval_resolved",
                                 f"module '{parts[1]}' approved via chat", None)
-                reply = f"approved {parts[1]} — send 'run' to continue."
+                reply = f"approved {_h(parts[1])} — send 'run' to continue."
             else:
                 reply = "usage: approve <module-id>"
         elif low.startswith("report"):
@@ -214,9 +239,19 @@ class WebApp:
 
 def serve(project_dir, port=8787, host="127.0.0.1"):
     app = WebApp(project_dir)
+    # DNS-rebinding defense: a localhost bind only answers to localhost Host headers.
+    # An explicit wildcard bind (0.0.0.0) opts out — that exposure is documented.
+    allowed_hosts = None if host in ("0.0.0.0", "::") else {"127.0.0.1", "localhost", host}
 
     class Handler(BaseHTTPRequestHandler):
         def _do(self, method):
+            if allowed_hosts is not None:
+                h = (self.headers.get("Host") or "").split(":")[0]
+                if h not in allowed_hosts:
+                    self.send_response(403)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
             u = urlparse(self.path)
             q = {k: v[0] for k, v in parse_qs(u.query).items()}
             body = b""
@@ -348,7 +383,10 @@ th{color:var(--mut);font-weight:600}
 const $=s=>document.querySelector(s), api=(p,o)=>fetch(p,o).then(r=>r.json());
 let ENG=null;
 const eng=()=>ENG;
-function esc(s){return (s==null?'':''+s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+function esc(s){return (s==null?'':''+s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+const SEVS=['critical','high','medium','low','info'],STATS=['candidate','validated','false_positive'];
+const sevCls=s=>SEVS.includes((s||'').toLowerCase())?(''+s).toLowerCase():'info';
+const stCls=s=>STATS.includes(s)?s:'candidate';
 function chat(cls,html){const d=document.createElement('div');d.className='msg '+cls;d.innerHTML=html;$('#chatlog').appendChild(d);$('#chatlog').scrollTop=1e9}
 
 async function refreshEngagements(sel){
@@ -384,9 +422,9 @@ async function refreshStatus(){
 async function refreshFindings(){
   const {findings}=await api('/api/findings?eng='+encodeURIComponent(ENG));
   if(!findings.length){$('#findings').innerHTML='<span class=muted>No findings yet — run the pipeline.</span>';return}
-  const rows=findings.map(f=>`<tr><td><span class="pill sev-${(f.severity||'info')}">${esc(f.severity||'info')}</span></td>
+  const rows=findings.map(f=>`<tr><td><span class="pill sev-${sevCls(f.severity)}">${esc(f.severity||'info')}</span></td>
     <td>${esc(f.title)}<div class=muted style="font-size:11px">${esc((f.evidence&&f.evidence.asset_value)||f.source_tool||'')}</div></td>
-    <td class="st-${f.status}">${esc(f.status)}</td><td>${esc(f.owasp||'—')}</td><td>${f.cvss??'—'}</td></tr>`).join('');
+    <td class="st-${stCls(f.status)}">${esc(f.status)}</td><td>${esc(f.owasp||'—')}</td><td>${esc(f.cvss??'—')}</td></tr>`).join('');
   $('#findings').innerHTML=`<table><tr><th>Sev</th><th>Finding</th><th>Status</th><th>OWASP</th><th>CVSS</th></tr>${rows}</table>`;
 }
 async function refreshTree(){
@@ -394,8 +432,8 @@ async function refreshTree(){
   if(!t.branches||!t.branches.length){$('#tree').innerHTML='<span class=muted>—</span>';return}
   $('#tree').innerHTML=`<div class=muted>🎯 ${esc(t.target)}</div>`+t.branches.map(b=>
     `<div class=branch><div class=dom>▸ ${esc(b.domain)} <span class=muted>(${b.findings.length})</span></div>
-     <ul>${b.findings.map(f=>`<li><span class="pill sev-${(f.severity||'info')}">${esc(f.severity)}</span>
-       ${esc(f.title)} <span class="st-${f.status} muted">${esc(f.status)}</span></li>`).join('')}</ul></div>`).join('');
+     <ul>${b.findings.map(f=>`<li><span class="pill sev-${sevCls(f.severity)}">${esc(f.severity)}</span>
+       ${esc(f.title)} <span class="st-${stCls(f.status)} muted">${esc(f.status)}</span></li>`).join('')}</ul></div>`).join('');
 }
 
 $('#createbtn').onclick=async()=>{
