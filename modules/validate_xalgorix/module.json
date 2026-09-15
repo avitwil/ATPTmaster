@@ -1,0 +1,13 @@
+{
+  "id": "validate_xalgorix",
+  "name": "Verification-First Validator",
+  "phase": "validate",
+  "entrypoint": "module:ValidateXalgorix",
+  "consumes": ["finding"],
+  "provides": ["validated_finding"],
+  "intrusive": false,
+  "run_modes": ["step", "semi", "full"],
+  "enabled": true,
+  "extracted_from": "xalgorix/xalgorix@fa7ca43",
+  "description": "Verification-first triage: deterministic confidence scoring (+ optional reasoning) promotes high-confidence candidates to validated and eliminates likely false-positives."
+}
