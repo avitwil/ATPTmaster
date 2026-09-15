@@ -164,8 +164,8 @@ prompt to defeat the refusing model's guardrails.
 | backend | mechanism | auth |
 |---|---|---|
 | `cli` | `subprocess.run([...cmd, prompt])`, capture stdout | existing CLI login (e.g. `claude -p`, `codex exec`) — no key handling by us |
-| `http_api` | `urllib.request` POST to OpenAI/Anthropic-compatible endpoint | API key read from `os.environ[provider["key_env"]]` at call time only |
-| `ollama` | `urllib.request` POST `http://localhost:11434/api/chat` | none (local) |
+| `http_api` | `urllib.request` POST; `api` field selects the wire shape — `anthropic` (`/v1/messages`, `x-api-key`, `anthropic-version`, `messages[]`+`max_tokens`) or `openai` (default: `/v1/chat/completions`, `Bearer`, `messages[]`). Explicit `endpoint` overrides the default URL. | API key read from `os.environ[provider["key_env"]]` at call time only |
+| `ollama` | `urllib.request` POST `http://localhost:11434/api/generate` (reads `.response`) | none (local) |
 
 ### 6.4 Refusal classifier
 Small heuristic, deterministic: empty/near-empty output, or output matching a
@@ -185,7 +185,8 @@ result → classified `refused`. Purpose is *advance the ladder*, never to detec
   "reasoning": {
     "providers": {
       "claude_cli": { "backend": "cli",      "cmd": "claude -p" },
-      "anthropic":  { "backend": "http_api", "endpoint": "https://api.anthropic.com/v1/messages", "model": "claude-opus-5", "key_env": "ANTHROPIC_API_KEY" },
+      "anthropic":  { "backend": "http_api", "api": "anthropic", "model": "claude-opus-5", "key_env": "ANTHROPIC_API_KEY" },
+      "openai":     { "backend": "http_api", "api": "openai",    "model": "gpt-5",        "key_env": "OPENAI_API_KEY" },
       "local":      { "backend": "ollama",   "model": "llama3.1" }
     },
     "preference": ["claude_cli", "anthropic", "local"],
