@@ -1,0 +1,13 @@
+{
+  "id": "report_ptes",
+  "name": "PTES Markdown Reporter",
+  "phase": "report",
+  "entrypoint": "module:ReportPTES",
+  "consumes": ["finding"],
+  "provides": [],
+  "intrusive": false,
+  "run_modes": ["step", "semi", "full"],
+  "enabled": true,
+  "extracted_from": "atpt-native",
+  "description": "Renders a PTES-compliant Markdown report (exec summary, per-finding CVSS/OWASP/remediation/evidence, appendix) to var/reports/<engagement>.md."
+}
