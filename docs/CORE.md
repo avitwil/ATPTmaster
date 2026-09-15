@@ -64,7 +64,17 @@ atpt plan   --engagement <id> --mode full
 atpt run    --engagement <id> --mode semi        # add --dry-run to preview
 atpt status --engagement <id> [--json]           # --json for N8N ingestion
 atpt approve <module> --engagement <id>          # release a gated intrusive step
+atpt serve  [--port 8787] [--host 127.0.0.1]     # launch the web console
 ```
+
+## Web console (`atpt/web.py`)
+`atpt serve` runs a stdlib `http.server` (no deps) hosting a single-page operator console:
+define **scope & target** (required before any run) → **chat control** (`run`/`plan`/`status`/
+`approve`/`report`) → live **findings** table + **attack-direction tree** (the PTT) → **Download
+report** (PTES Markdown). Routing lives in `WebApp.handle(method, path, query, body)` (unit-tested
+without sockets); each request opens its own SQLite connection. Binds to `127.0.0.1` by default —
+an operator tool with no auth; do not expose it. `POST /api/demo` seeds a sample engagement so the
+full recon→map→validate→report loop runs with no tools installed.
 
 ## How N8N drives this later (topology still open)
 - **Execute Command** → `atpt run --engagement X --mode semi --json`
