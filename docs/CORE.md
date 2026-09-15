@@ -41,6 +41,10 @@ a **provider ladder** from the engagement `config.reasoning`: registered provide
 to the next provider — ultimately a local model — never rewriting the prompt to defeat
 a model's guardrails. Exhaustion returns `None`, so a module falls back to deterministic
 logic. API keys are read from env vars (`key_env`) at call time; never stored.
+Each operator connects their own model(s): `cli` shells out to an already-logged-in
+CLI (`claude`/`codex`), `http_api` takes an `api` shape (`anthropic` / `openai`,
+default `openai`) + `model` + `key_env`, and `ollama` runs a local model. Bundle
+nothing proprietary — the user brings the LLM.
 
 The `map_ptt` module is the first consumer: it maps assets to prioritized **candidate
 findings** with deterministic rules, then optionally enriches via `ctx.reason`.

@@ -52,15 +52,31 @@ def _backend_cli(cfg: dict, prompt: str) -> str:
 
 
 def _backend_http_api(cfg: dict, prompt: str) -> str:
+    """Hosted LLM over HTTP. `api` selects the wire shape so a user connects a
+    provider with just api + model + key_env:
+      - "anthropic": POST /v1/messages, x-api-key + anthropic-version, messages[]+max_tokens
+      - "openai" (default): POST /v1/chat/completions, Bearer, messages[]
+    An explicit `endpoint` overrides the default URL (e.g. an OpenAI-compatible gateway).
+    """
     key_env = cfg.get("key_env")
     key = os.environ.get(key_env) if key_env else None
     if key_env and not key:
         raise RuntimeError(f"missing API key env var '{key_env}'")
+    api = (cfg.get("api") or "openai").lower()
     headers = {"Content-Type": "application/json"}
-    if key:
-        headers["Authorization"] = f"Bearer {key}"
-    body = json.dumps({"model": cfg.get("model"), "prompt": prompt}).encode()
-    req = urllib.request.Request(cfg["endpoint"], data=body, headers=headers)
+    if api == "anthropic":
+        url = cfg.get("endpoint", "https://api.anthropic.com/v1/messages")
+        headers["anthropic-version"] = cfg.get("anthropic_version", "2023-06-01")
+        if key:
+            headers["x-api-key"] = key
+        body = {"model": cfg.get("model"), "max_tokens": cfg.get("max_tokens", 1024),
+                "messages": [{"role": "user", "content": prompt}]}
+    else:  # openai-compatible (OpenAI, gateways, vLLM, Ollama's /v1, ...)
+        url = cfg.get("endpoint", "https://api.openai.com/v1/chat/completions")
+        if key:
+            headers["Authorization"] = f"Bearer {key}"
+        body = {"model": cfg.get("model"), "messages": [{"role": "user", "content": prompt}]}
+    req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers)
     with urllib.request.urlopen(req, timeout=cfg.get("timeout", 120)) as resp:
         return _extract_text(json.loads(resp.read().decode()))
 
