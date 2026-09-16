@@ -16,18 +16,29 @@ orchestrator-agnostic engine with a web console.
 scope → recon → map → exploit → validate → report
 ```
 
-Modules self-sequence on tokens (`target → asset → finding → validated_finding`). Shipped modules:
+Modules self-sequence on tokens (`target → asset → finding → validated_finding`). Shipped modules (scope coverage: Web · SQLi · Infra · API · Mobile · LLM · Cloud · Wireless):
 
-| module | phase | role | extracted from |
-|---|---|---|---|
-| `recon_nebula` | recon | subfinder→naabu→nmap→httpx→ffuf wrapper, scope-enforced | berylliumsec/nebula |
-| `map_ptt` | map | decompose assets → prioritized candidate findings (PTT) | GreyDGL/PentestGPT |
-| `validate_xalgorix` | validate | verification-first: promote high-confidence, drop false-positives | xalgorix/xalgorix |
-| `report_ptes` | report | PTES Markdown report | native |
+| module | phase | intrusive | role | wraps |
+|---|---|---|---|---|
+| `recon_nebula` | recon | no | subfinder→naabu→nmap→httpx→ffuf, scope-enforced | berylliumsec/nebula |
+| `recon_cloud` | recon | no | cloud posture audit (read-only) | prowler |
+| `recon_wireless` | recon | no | flag open/WEP APs from an airodump CSV | aircrack-ng |
+| `recon_mobile` | recon | no | APK static analysis — exported components | apktool |
+| `map_ptt` | map | no | decompose assets → prioritized candidate findings (PTT) | GreyDGL/PentestGPT |
+| `map_llm` | map | no | flag LLM/chat prompt-injection surfaces (OWASP LLM01) | native |
+| `scan_nuclei` | map | **yes** | active Web/API/Infra vuln scan | nuclei |
+| `exploit_hbgpt` | exploit | **yes** | LLM proposes next validation step — **propose-only by default** | hackingBuddyGPT |
+| `exploit_sqli` | exploit | **yes** | active SQL-injection testing | sqlmap |
+| `validate_xalgorix` | validate | no | verification-first: promote high-confidence, drop false-positives | xalgorix |
+| `report_ptes` | report | no | PTES Markdown report | native |
 
-> Intrusive live exploitation (SSH/shell agents) is intentionally **not** enabled in this
-> shareable build — the approval gate exists, but autonomous exploitation ships as a separate,
-> explicitly-enabled module.
+> **Safety model for intrusive modules** (`scan_nuclei`, `exploit_*`): every one enforces
+> engagement scope (`atpt/scope.py`) before touching a host, is **gated behind human approval
+> in `semi` mode**, and **no-ops cleanly when its tool is absent** (so the framework installs
+> anywhere). `exploit_hbgpt` is **propose-only** by default — it logs the LLM's suggested next
+> step; actual execution is opt-in (`config.exploit.execute`) and additionally restricted to a
+> read-only command allowlist. No module rewrites prompts to bypass a model's guardrails.
+> Run intrusive modules only against systems you are **authorized** to test.
 
 ## Quick start
 
