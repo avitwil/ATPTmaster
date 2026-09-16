@@ -16,6 +16,12 @@ _ANDROID = "{http://schemas.android.com/apk/res/android}"
 
 def parse_manifest(xml_text: str) -> list[dict]:
     out = []
+    # A real AndroidManifest.xml never declares a DTD/entities. Reject them before
+    # parsing: stdlib ElementTree expands internal entities (billion-laughs DoS)
+    # on untrusted APK input.
+    head = (xml_text or "")[:4096].upper()
+    if "<!DOCTYPE" in head or "<!ENTITY" in head:
+        return out
     try:
         root = ET.fromstring(xml_text)
     except ET.ParseError:

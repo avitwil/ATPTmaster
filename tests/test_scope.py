@@ -30,3 +30,20 @@ class ScopeTest(unittest.TestCase):
 
     def test_empty_scope_denies(self):
         self.assertFalse(in_scope({}, "acme.com"))
+
+    def test_userinfo_stripped(self):
+        self.assertTrue(in_scope(SCOPE, "http://user:pass@acme.com/"))
+        # a credential-embedded URL pointing at an out-of-scope host is still out
+        self.assertFalse(in_scope(SCOPE, "http://acme.com@evil.com/"))
+
+    def test_wildcard_domain(self):
+        s = {"in_scope_domains": ["*.acme.com"]}
+        self.assertTrue(in_scope(s, "api.acme.com"))
+        self.assertTrue(in_scope(s, "acme.com"))
+        self.assertFalse(in_scope(s, "evil.com"))
+
+    def test_ipv6(self):
+        s = {"in_scope_cidrs": ["2001:db8::/32"]}
+        self.assertTrue(in_scope(s, "2001:db8::1"))
+        self.assertTrue(in_scope(s, "http://[2001:db8::1]:8080/x"))
+        self.assertFalse(in_scope(s, "2001:dead::1"))
