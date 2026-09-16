@@ -77,6 +77,15 @@ class WirelessMobileTest(unittest.TestCase):
         self.assertIn("Exported activity", out[0]["title"])
         self.assertEqual(out[0]["domain"], "Mobile")
 
+    def test_mobile_parser_rejects_doctype_entities(self):
+        # billion-laughs style manifest must be refused before parsing
+        bomb = ('<?xml version="1.0"?><!DOCTYPE lolz [<!ENTITY lol "lol">'
+                '<!ENTITY lol2 "&lol;&lol;&lol;">]>'
+                '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
+                '<application><activity android:exported="true" android:name="&lol2;"/>'
+                '</application></manifest>')
+        self.assertEqual(_mob.parse_manifest(bomb), [])
+
     def test_mobile_no_config_skips(self):
         self.assertIn("recon_mobile", self.mods)
         res = self.mods["recon_mobile"].run(self._ctx({}))

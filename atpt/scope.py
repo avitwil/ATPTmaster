@@ -1,8 +1,8 @@
 """Scope oracle — the Python-side gate every intrusive module MUST call before
 touching a host. Mirrors recon/recon_runner.sh's shell oracle: explicit
 out-of-scope deny always wins; otherwise a host is in scope only if it matches an
-in-scope domain (exact or subdomain) or falls inside an in-scope CIDR.
-Stdlib-only. Fail-closed: anything not positively matched is OUT of scope."""
+in-scope domain (exact, subdomain, or a `*.domain` wildcard) or falls inside an
+in-scope CIDR. Stdlib-only. Fail-closed: anything not positively matched is OUT."""
 from __future__ import annotations
 import ipaddress
 import re
@@ -10,7 +10,18 @@ import re
 
 def _host_of(target: str) -> str:
     h = re.sub(r"^\w+://", "", (target or "").strip().lower())
-    return h.split("/")[0].split(":")[0]
+    h = h.split("/")[0]              # drop path/query
+    if "@" in h:                     # drop userinfo (user:pass@host)
+        h = h.split("@")[-1]
+    if h.startswith("["):            # bracketed IPv6 literal, e.g. [::1]:8080
+        return h[1:].split("]")[0]
+    if h.count(":") >= 2:            # bare IPv6 literal (a port needs brackets)
+        return h
+    return h.split(":")[0]           # host:port -> drop port
+
+
+def _norm(d: str) -> str:
+    return str(d).lower().lstrip("*").lstrip(".")
 
 
 def in_scope(scope: dict, target: str) -> bool:
@@ -19,11 +30,11 @@ def in_scope(scope: dict, target: str) -> bool:
     if not host:
         return False
     for d in scope.get("out_of_scope", []) or []:      # explicit deny wins
-        d = str(d).lower().lstrip(".")
+        d = _norm(d)
         if host == d or host.endswith("." + d):
             return False
     for d in scope.get("in_scope_domains", []) or []:
-        d = str(d).lower().lstrip(".")
+        d = _norm(d)
         if host == d or host.endswith("." + d):
             return True
     try:
