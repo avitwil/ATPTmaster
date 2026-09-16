@@ -40,6 +40,22 @@ Modules self-sequence on tokens (`target → asset → finding → validated_fin
 > read-only command allowlist. No module rewrites prompts to bypass a model's guardrails.
 > Run intrusive modules only against systems you are **authorized** to test.
 
+## Install
+
+Zero-dependency core — Python ≥ 3.10 stdlib only. The optional scanners are never
+installed silently; add them with `--with-tools`.
+
+```bash
+git clone <this-repo> atpt && cd atpt
+./install.sh                 # core setup + report which optional tools are present
+./install.sh --pipx          # also expose the `atpt` command (via pipx)
+./install.sh --with-tools    # also install the optional scanners (sudo apt + go install)
+```
+
+Optional tools by module (each module no-ops cleanly if its tool is missing):
+`nmap sqlmap jq aircrack-ng apktool` (apt) · `subfinder naabu httpx nuclei ffuf`
+(`go install`) · `prowler` (cloud, `pipx`) · `ollama` (local LLM, optional).
+
 ## Quick start
 
 ```bash
