@@ -1,0 +1,83 @@
+{
+  "name": "ATPT — Full Pipeline Driver (CLI)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "n1",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Engagement config — edit these, or replace this node with a Webhook/Form trigger.\n// `home` is the ATPTmaster install dir (contains atpt/, modules/, recon/).\nreturn [{ json: {\n  home:       \"/opt/atpt\",\n  engagement: \"ACME-2026-Q3\",\n  scope_file: \"/opt/atpt/recon/scope.json\",\n  mode:       \"semi\"\n}}];\n"
+      },
+      "id": "n2",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "command": "=cd {{ $('Config').item.json.home }} && ATPT_HOME={{ $('Config').item.json.home }} python3 -m atpt init --scope {{ $('Config').item.json.scope_file }} --engagement {{ $('Config').item.json.engagement }} --mode {{ $('Config').item.json.mode }}"
+      },
+      "id": "n3",
+      "name": "atpt init",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [600, 300]
+    },
+    {
+      "parameters": {
+        "command": "=cd {{ $('Config').item.json.home }} && ATPT_HOME={{ $('Config').item.json.home }} python3 -m atpt run --engagement {{ $('Config').item.json.engagement }} --mode {{ $('Config').item.json.mode }} --json"
+      },
+      "id": "n4",
+      "name": "atpt run",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [800, 300]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Parse `atpt run --json`. If gated_on is set, an intrusive step is waiting for\n// human approval: approve it (`atpt approve <module> --engagement <id>`), then\n// re-run. Loop until gated_on is null (queue drained), then read the report.\nconst eng = $('Config').first().json.engagement;\nconst home = $('Config').first().json.home;\nlet res = {};\ntry { res = JSON.parse($json.stdout || '{}'); } catch (_) {}\nconst gated = res.gated_on || null;\nconst next = gated\n  ? `GATED: approve then continue -> cd ${home} && ATPT_HOME=${home} python3 -m atpt approve ${gated} --engagement ${eng} && python3 -m atpt run --engagement ${eng} --mode semi --json`\n  : `DONE: pipeline drained. Report -> ${home}/var/reports/${eng}.md`;\nreturn [{ json: { engagement: eng, executed: res.executed || [], gated_on: gated, report: `${home}/var/reports/${eng}.md`, next_step: next } }];\n"
+      },
+      "id": "n5",
+      "name": "Summarize + Next Step",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "command": "=cd {{ $('Config').item.json.home }} && ATPT_HOME={{ $('Config').item.json.home }} python3 -m atpt status --engagement {{ $('Config').item.json.engagement }} --json"
+      },
+      "id": "n6",
+      "name": "atpt status",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [1200, 300]
+    },
+    {
+      "parameters": {},
+      "id": "n7",
+      "name": "Done",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1400, 300]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": { "main": [[{ "node": "Config", "type": "main", "index": 0 }]] },
+    "Config": { "main": [[{ "node": "atpt init", "type": "main", "index": 0 }]] },
+    "atpt init": { "main": [[{ "node": "atpt run", "type": "main", "index": 0 }]] },
+    "atpt run": { "main": [[{ "node": "Summarize + Next Step", "type": "main", "index": 0 }]] },
+    "Summarize + Next Step": { "main": [[{ "node": "atpt status", "type": "main", "index": 0 }]] },
+    "atpt status": { "main": [[{ "node": "Done", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": false
+}

@@ -1,0 +1,13 @@
+{
+  "id": "recon_cloud",
+  "name": "Cloud Posture Audit (prowler)",
+  "phase": "recon",
+  "entrypoint": "module:ReconCloud",
+  "consumes": ["target"],
+  "provides": ["finding"],
+  "intrusive": false,
+  "run_modes": ["step", "semi", "full"],
+  "enabled": true,
+  "extracted_from": "prowler-cloud/prowler",
+  "description": "Read-only cloud posture audit (prowler) when config.cloud.provider is set; emits findings from failed checks. No-op if prowler absent or no cloud target configured. Credentials come from the operator's environment."
+}

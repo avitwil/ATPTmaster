@@ -1,0 +1,13 @@
+{
+  "id": "recon_mobile",
+  "name": "Mobile APK Static Analysis (apktool)",
+  "phase": "recon",
+  "entrypoint": "module:ReconMobile",
+  "consumes": ["target"],
+  "provides": ["finding"],
+  "intrusive": false,
+  "run_modes": ["step", "semi", "full"],
+  "enabled": true,
+  "extracted_from": "iBotPeaches/Apktool",
+  "description": "Static APK analysis: decodes with apktool (config.mobile.apk) or reads a supplied AndroidManifest (config.mobile.manifest), flagging exported components. No-op if apktool absent and no manifest configured."
+}

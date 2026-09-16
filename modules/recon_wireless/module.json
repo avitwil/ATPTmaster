@@ -1,0 +1,13 @@
+{
+  "id": "recon_wireless",
+  "name": "Wireless Survey (airodump-ng)",
+  "phase": "recon",
+  "entrypoint": "module:ReconWireless",
+  "consumes": ["target"],
+  "provides": ["finding"],
+  "intrusive": false,
+  "run_modes": ["step", "semi", "full"],
+  "enabled": true,
+  "extracted_from": "aircrack-ng/aircrack-ng",
+  "description": "Parses an airodump-ng CSV (config.wireless.csv) and flags open/WEP access points as findings. Live capture needs operator monitor-mode setup; no-op when no CSV is configured."
+}

@@ -1,0 +1,13 @@
+{
+  "id": "scan_nuclei",
+  "name": "Nuclei Active Scanner",
+  "phase": "map",
+  "entrypoint": "module:ScanNuclei",
+  "consumes": ["asset"],
+  "provides": ["finding"],
+  "intrusive": true,
+  "run_modes": ["step", "semi", "full"],
+  "enabled": true,
+  "extracted_from": "projectdiscovery/nuclei",
+  "description": "Active web/API/infra vuln scan (nuclei) over in-scope assets; emits findings from nuclei JSONL. Intrusive -> gated in semi; no-op if nuclei absent."
+}
