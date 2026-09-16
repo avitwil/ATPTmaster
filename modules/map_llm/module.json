@@ -1,0 +1,13 @@
+{
+  "id": "map_llm",
+  "name": "LLM Prompt-Injection Surface Mapper",
+  "phase": "map",
+  "entrypoint": "module:MapLLM",
+  "consumes": ["asset"],
+  "provides": ["finding"],
+  "intrusive": false,
+  "run_modes": ["step", "semi", "full"],
+  "enabled": true,
+  "extracted_from": "atpt-native (OWASP LLM Top 10)",
+  "description": "Flags in-scope web assets that look like LLM/chat apps as prompt-injection TEST surfaces (OWASP LLM01). Non-intrusive heuristic; marks candidates, sends no payloads."
+}
