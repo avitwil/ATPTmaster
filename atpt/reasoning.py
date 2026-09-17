@@ -44,7 +44,10 @@ def _backend_cli(cfg: dict, prompt: str) -> str:
     cmd = cfg.get("cmd")
     if not cmd:
         raise ValueError("cli backend requires 'cmd'")
-    proc = subprocess.run(cmd.split() + [prompt], capture_output=True,
+    argv = cmd.split()
+    if cfg.get("model") and cfg.get("model_flag"):   # ladder can pick a CLI model
+        argv += [cfg["model_flag"], cfg["model"]]
+    proc = subprocess.run(argv + [prompt], capture_output=True,
                           text=True, timeout=cfg.get("timeout", 120))
     if proc.returncode != 0:
         raise RuntimeError(f"cli exit {proc.returncode}: {proc.stderr[-200:]}")

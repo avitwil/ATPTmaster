@@ -1059,13 +1059,10 @@ function renderLadder(){
   fillModelOptions();
 }
 function fillModelOptions(){
-  const prov=$('#lm_prov').value; const list=MODELS[prov];
-  const sub=SUB.find(s=>s.name===prov);
-  if(sub){ // CLI provider: single "model" = its command, no live list
-    $('#lm_model').innerHTML='<option value="">(CLI — uses its command)</option>'; return;
-  }
+  const prov=$('#lm_prov').value;
+  let list=MODELS[prov]; if(!list){ const st=PSTATUS[prov]; if(st&&st.models&&st.models.length)list=st.models; }
   if(!list){ $('#lm_model').innerHTML='<option value="">— fetch in Models tab —</option>'; return; }
-  $('#lm_model').innerHTML=list.map(m=>`<option value="${esc(m)}">${esc(m)}</option>`).join('')||'<option value="">(none returned)</option>';
+  $('#lm_model').innerHTML='<option value="">(default)</option>'+list.map(m=>`<option value="${esc(m)}">${esc(m)}</option>`).join('');
 }
 function syncFromDom(){
   const rd=(row,cls)=>{const e=row.querySelector(cls);return e?e.value.trim():'';};
@@ -1104,7 +1101,7 @@ function wireRows(){
     if(r.mode==='terminal')out.innerHTML='run in your terminal: <code>'+esc(r.command)+'</code>'+(r.help?' — '+esc(r.help):'');
     else out.textContent=(r.stdout||r.help||'login started').slice(0,200);});
 }
-async function loadStatuses(){const r=await api('/api/providers/status');PSTATUS={};(r.providers||[]).forEach(p=>PSTATUS[p.name]=p);}
+async function loadStatuses(){const r=await api('/api/providers/status');PSTATUS={};(r.providers||[]).forEach(p=>{PSTATUS[p.name]=p; if(p.models&&p.models.length&&!MODELS[p.name])MODELS[p.name]=p.models;});}
 
 /* ---- live model lists ---- */
 async function fetchModels(prov,btn){
@@ -1115,9 +1112,10 @@ async function fetchModels(prov,btn){
   MODELS[prov]=r.models||[]; return {models:MODELS[prov]};
 }
 function renderModels(){
-  // only hosted/local providers expose a model list (not CLI)
-  const list=[...HTTP.map(p=>({name:p.name,kind:'API · '+p.api})),...OLLAMA.map(p=>({name:p.name,kind:'Ollama'}))].filter(p=>p.name);
-  if(!list.length){$('#modelsList').innerHTML='<div class=hint>Configure an API or Ollama provider first (AI settings → providers), then Save.</div>';return;}
+  const list=[...HTTP.map(p=>({name:p.name,kind:'API · '+p.api})),
+    ...SUB.filter(p=>!p.custom&&PSTATUS[p.name]).map(p=>({name:p.name,kind:'Subscription CLI'})),
+    ...OLLAMA.map(p=>({name:p.name,kind:'Ollama'}))].filter(p=>p.name);
+  if(!list.length){$('#modelsList').innerHTML='<div class=hint>Configure a provider first (AI settings → providers), then Save.</div>';return;}
   $('#modelsList').innerHTML=list.map(p=>`<div class="prow" data-prov="${esc(p.name)}" style="grid-template-columns:1fr auto">
     <div><b>${esc(p.name)}</b> <span class=hint>${esc(p.kind)}</span></div>
     <button class="ghost m_fetch">Fetch models</button>
@@ -1187,7 +1185,7 @@ function providersMap(){
   const m={};
   HTTP.forEach(p=>{if(!p.name)return;const c={backend:'http_api',api:p.api,model:p.model};if(p.endpoint)c.endpoint=p.endpoint;
     if(p.mode==='env'){if(p.key)c.key_env=p.key;} else {if(p.key)c.api_key=p.key;}m[p.name]=c;});
-  SUB.forEach(p=>{if(!p.name)return;m[p.name]={backend:'cli',cmd:p.cmd||p.name};});
+  SUB.forEach(p=>{if(!p.name)return;const c={backend:'cli',cmd:p.cmd||p.name};const mf=(PSTATUS[p.name]||{}).model_flag;if(mf)c.model_flag=mf;m[p.name]=c;});
   OLLAMA.forEach(p=>{if(!p.name)return;const c={backend:'ollama',model:p.model||'llama3.1'};if(p.endpoint)c.endpoint=p.endpoint;m[p.name]=c;});
   return m;
 }

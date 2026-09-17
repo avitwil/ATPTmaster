@@ -28,6 +28,8 @@ REGISTRY: dict[str, dict] = {
         "login": ["claude"],
         "login_interactive": True,
         "help": "After install, run `claude` and use /login (opens a browser).",
+        "model_flag": "--model",
+        "models": ["opus", "sonnet", "haiku"],           # Claude Code --model aliases
     },
     "gemini": {
         "label": "Gemini CLI (Google)",
@@ -37,6 +39,8 @@ REGISTRY: dict[str, dict] = {
         "login": ["gemini"],
         "login_interactive": True,
         "help": "After install, run `gemini` and follow the Google sign-in prompt.",
+        "model_flag": "-m",
+        "models": ["gemini-2.5-pro", "gemini-2.5-flash"],
     },
     "codex": {
         "label": "Codex CLI (OpenAI)",
@@ -46,6 +50,8 @@ REGISTRY: dict[str, dict] = {
         "login": ["codex", "login"],
         "login_interactive": False,
         "help": "After install, run `codex login` to authenticate.",
+        "model_flag": "-m",
+        "models": ["gpt-5-codex", "gpt-5", "o4-mini"],
     },
 }
 
@@ -84,6 +90,8 @@ def status(name_or_binary: str) -> dict:
         "label": entry["label"] if entry else name_or_binary,
         "cmd": resolved_cmd(name_or_binary) if entry else None,
         "help": entry["help"] if entry else None,
+        "model_flag": entry.get("model_flag") if entry else None,
+        "models": list(entry.get("models", [])) if entry else [],
     }
 
 

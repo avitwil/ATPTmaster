@@ -8,6 +8,7 @@ are used only to make the request (never returned). Stdlib-only; never raises.
 from __future__ import annotations
 import json
 import os
+import os.path
 import urllib.request
 
 
@@ -57,7 +58,13 @@ def list_models(cfg: dict) -> tuple[list, str | None]:
             data = _get_json(url, headers)
             return [m.get("id") for m in data.get("data", []) if m.get("id")], None
         if backend == "cli":
-            return [], "CLI providers don't expose a model list"
+            from . import providers
+            first = ((cfg.get("cmd") or "").split() or [""])[0]
+            binary = os.path.basename(first)             # /usr/bin/claude -> claude
+            for e in providers.REGISTRY.values():
+                if e["binary"] == binary:
+                    return list(e.get("models", [])), None   # curated per known CLI
+            return [], "custom CLI — set the model manually"
     except Exception as exc:
         return [], str(exc)
     return [], f"unknown backend '{backend}'"

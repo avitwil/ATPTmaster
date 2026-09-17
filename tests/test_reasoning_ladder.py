@@ -61,6 +61,22 @@ class LadderTest(unittest.TestCase):
         body = json.loads(captured[0].data.decode())
         self.assertEqual(body.get("reasoning_effort"), "high")
 
+    def test_cli_backend_appends_model_flag(self):
+        seen = {}
+
+        def fake_run(argv, capture_output=True, text=True, timeout=None):
+            seen["argv"] = argv
+            class R: returncode, stdout, stderr = 0, "ok", ""
+            return R()
+        orig = reasoning.subprocess.run
+        reasoning.subprocess.run = fake_run
+        try:
+            from atpt.reasoning import _backend_cli
+            _backend_cli({"cmd": "/usr/bin/claude -p", "model": "sonnet", "model_flag": "--model"}, "hi")
+        finally:
+            reasoning.subprocess.run = orig
+        self.assertEqual(seen["argv"][:5], ["/usr/bin/claude", "-p", "--model", "sonnet", "hi"])
+
     def test_no_effort_no_param(self):
         captured = []
 

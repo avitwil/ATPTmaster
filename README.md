@@ -121,8 +121,11 @@ Everything is configured in the menu (no JSON editing), grouped as:
   **sudo password** (memory-only). The reasoning command is the resolved binary path
   (e.g. `/usr/bin/claude -p`), independent of `PATH`.
 - *Local LLM* — Ollama models.
-- *Models* — **live model lists** fetched per provider (OpenAI `/v1/models`, Anthropic
-  `/v1/models`, Ollama `/api/tags`).
+- *Models* — the model list per provider: **live-fetched** for hosted APIs (OpenAI
+  `/v1/models`, Anthropic `/v1/models`) and Ollama (`/api/tags`), and a **curated
+  list** for the subscription CLIs (Claude/Gemini/Codex, since they have no list API).
+  A CLI model picked in the ladder is passed with the CLI's model flag (e.g.
+  `codex exec -m gpt-5-codex`).
 
 **Scope** — *Target & scope*: domain-typed scope (Infra / Web / API / AI / Cloud /
 Mobile / Wireless); tick the domains in play and list what's **in scope** and

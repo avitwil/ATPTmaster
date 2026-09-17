@@ -14,14 +14,20 @@ class ProvidersRegistryTest(unittest.TestCase):
             self.assertTrue(e["binary"] and e["pkg"])
             self.assertIsInstance(e["args"], list)
             self.assertIsInstance(e["login"], list)
+            self.assertTrue(e["model_flag"])            # a --model style flag
+            self.assertTrue(e["models"])                # curated model list
+
+    def test_status_exposes_models_and_flag(self):
+        st = providers.status("claude")
+        self.assertTrue(st["models"])
+        self.assertEqual(st["model_flag"], providers.REGISTRY["claude"]["model_flag"])
 
     def test_resolved_cmd_uses_bin_path_and_args(self):
-        # not installed in the test env -> falls back to the bare binary + args
-        self.assertEqual(providers.resolved_cmd("claude"), "claude -p")
-        # once resolvable, uses the full path
         orig = providers.shutil.which
-        providers.shutil.which = lambda b: "/usr/local/bin/claude" if b == "claude" else None
         try:
+            providers.shutil.which = lambda b: None                 # not installed
+            self.assertEqual(providers.resolved_cmd("claude"), "claude -p")
+            providers.shutil.which = lambda b: "/usr/local/bin/claude" if b == "claude" else None
             self.assertEqual(providers.resolved_cmd("claude"), "/usr/local/bin/claude -p")
         finally:
             providers.shutil.which = orig

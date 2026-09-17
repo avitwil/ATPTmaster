@@ -52,10 +52,15 @@ class ModelsTest(unittest.TestCase):
         self.assertEqual(m, ["llama3.1", "qwen2"])
         self.assertEqual(cap[0][0], "http://localhost:11434/api/tags")
 
-    def test_cli_has_no_list(self):
-        m, err = models.list_models({"backend": "cli", "cmd": "claude -p"})
+    def test_cli_known_returns_curated_models(self):
+        m, err = models.list_models({"backend": "cli", "cmd": "/usr/bin/claude -p"})
+        self.assertIsNone(err)
+        self.assertIn("sonnet", m)                      # curated Claude Code models
+
+    def test_cli_custom_has_no_list(self):
+        m, err = models.list_models({"backend": "cli", "cmd": "mycli -p"})
         self.assertEqual(m, [])
-        self.assertIn("CLI", err)
+        self.assertIn("custom", err.lower())
 
     def test_never_raises_on_http_error(self):
         def boom(url, headers, timeout=20):
