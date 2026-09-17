@@ -106,6 +106,28 @@ class WebTest(unittest.TestCase):
             "engagement": "../../../../tmp/pwn", "scope": {"in_scope_domains": ["x.com"]}})
         self.assertEqual(st, 400)
 
+    def test_logo_asset_served(self):
+        st, ct, body, _ = self._get("/assets/logo.png")
+        self.assertEqual(st, 200)
+        self.assertIn("image/png", ct)
+        self.assertTrue(len(body) > 100)
+        self.assertEqual(body[:8], b"\x89PNG\r\n\x1a\n")   # real PNG bytes
+
+    def test_favicon_maps_to_logo(self):
+        st, ct, _, _ = self._get("/favicon.ico")
+        self.assertEqual(st, 200)
+        self.assertIn("image/png", ct)
+
+    def test_asset_route_rejects_unknown_and_traversal(self):
+        for bad in ("/assets/cli.py", "/assets/../cli.py", "/assets/../../etc/passwd"):
+            st, _, _, _ = self._get(bad)
+            self.assertEqual(st, 404, bad)
+
+    def test_index_references_logo_and_favicon(self):
+        _, _, body, _ = self._get("/")
+        self.assertIn(b'href="/assets/logo.png"', body)   # favicon link
+        self.assertIn(b'src="/assets/logo.png"', body)     # brand panel
+
     def test_bad_json_body_is_400(self):
         st, _, body, _ = self.app.handle("POST", "/api/engagement", {}, b"{not json")
         self.assertEqual(st, 400)

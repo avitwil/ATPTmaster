@@ -143,9 +143,24 @@ class WebApp:
             self._rb = _load_report_builder(self.project_dir)
         return self._rb
 
+    _ASSETS = {"logo.png": "image/png", "clilogo.png": "image/png"}
+
+    def _serve_asset(self, path):
+        name = path.rsplit("/", 1)[-1]                 # basename only — no traversal
+        ctype = self._ASSETS.get(name)
+        if not ctype:
+            return self._json(404, {"error": "no such asset"})
+        try:
+            data = (self.project_dir / "atpt" / "assets" / name).read_bytes()
+        except Exception:
+            return self._json(404, {"error": "asset missing"})
+        return 200, ctype, data, {"Cache-Control": "max-age=86400"}
+
     def _route(self, method, path, query, body):
         if method == "GET" and path in ("/", "/index.html"):
             return 200, "text/html; charset=utf-8", INDEX_HTML.encode(), {}
+        if method == "GET" and (path.startswith("/assets/") or path == "/favicon.ico"):
+            return self._serve_asset("/assets/logo.png" if path == "/favicon.ico" else path)
 
         data = {}
         if method == "POST" and body:
@@ -417,6 +432,7 @@ def serve(project_dir, port=8787, host="127.0.0.1"):
 INDEX_HTML = r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ATPTmaster Console</title>
+<link rel="icon" type="image/png" href="/assets/logo.png">
 <style>
 :root{--bg:#0d1117;--panel:#161b22;--edge:#30363d;--fg:#e6edf3;--mut:#8b949e;--acc:#2f81f7;--field:#0d1117;
 --crit:#f85149;--high:#ff7b72;--med:#d29922;--low:#3fb950;--val:#3fb950;--cand:#d29922;--fp:#6e7681}
@@ -449,7 +465,9 @@ th{color:var(--mut);font-weight:600}
 .muted{color:var(--mut)}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}.grid2 label{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--mut)}
 .stat{display:flex;gap:14px;flex-wrap:wrap}.stat b{font-size:18px}.stat div{display:flex;flex-direction:column}
 .hidden{display:none!important}
-@media(max-width:900px){.wrap{grid-template-columns:1fr}}
+.brandcard{display:flex;align-items:center;justify-content:center;background:#000;border-color:var(--edge);padding:18px}
+.brandlogo{max-height:300px;max-width:100%;width:auto;display:block;filter:drop-shadow(0 0 12px rgba(47,129,247,.25))}
+@media(max-width:900px){.wrap{grid-template-columns:1fr}.brandlogo{max-height:200px}}
 /* settings modal */
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:flex-start;justify-content:center;z-index:50;padding:24px;overflow:auto}
 .sheet{background:var(--panel);border:1px solid var(--edge);border-radius:12px;width:100%;max-width:720px;display:flex;flex-direction:column;max-height:90vh}
@@ -489,6 +507,7 @@ pre.out{background:var(--field);border:1px solid var(--edge);border-radius:6px;p
 
 <div class="wrap">
   <div class="col">
+    <div class="card brandcard"><img class="brandlogo" src="/assets/logo.png" alt="ATPTmaster"></div>
     <div class="card" id="newcard">
       <h3>1 · Define scope &amp; target</h3>
       <div class="grid2">
