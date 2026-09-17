@@ -96,6 +96,29 @@ python3 -m unittest discover -s tests
 3. **Findings** table and an **attack-direction tree** (the PTT, grouped by domain, ranked by severity).
 4. **Download report** — the PTES Markdown deliverable.
 
+### ⚙ Settings
+
+A **Settings** dropdown (header) configures, without editing JSON:
+
+- **Providers (API key)** — hosted providers; per provider, *paste* a key (stored
+  on this machine) **or** name an *env var* (read at call time, nothing stored).
+  Stored keys are **redacted** everywhere they're read back.
+- **Subscription CLI** — CLIs you're logged into (`claude`, `gemini`, `codex`). If a
+  known one isn't installed, install it from here (**asks first, shows the exact
+  command**) and log in.
+- **Local LLM** — Ollama models. **Model ladder** — order the fallback preference and
+  set a per-phase policy (`any` / `hosted_ok` / `local_only`).
+- **Operator** — pentester name (appears on the report), light/dark theme, and
+  **Allow sudo** (privileged scans). The sudo password is **held in memory only** —
+  never written to disk, never logged, re-asked after a restart.
+- **CTF** (per engagement) — VPN config path, **goals** (injected into the LLM's
+  prompts so it knows the objective), and attack-box host/user. The attack-box SSH
+  password, like the sudo password, is **kept in memory only**.
+
+Provider/ladder/name/sudo settings are global; CTF settings attach to the selected
+engagement. Reasoning config set here is used by runs (engagement config overrides
+the global default).
+
 ## Connecting an LLM (optional, for adaptive reasoning)
 
 Reasoning modules call a **provider ladder** — try providers in your preference order, fall

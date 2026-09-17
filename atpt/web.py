@@ -418,13 +418,14 @@ INDEX_HTML = r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ATPTmaster Console</title>
 <style>
-:root{--bg:#0d1117;--panel:#161b22;--edge:#30363d;--fg:#e6edf3;--mut:#8b949e;--acc:#2f81f7;
+:root{--bg:#0d1117;--panel:#161b22;--edge:#30363d;--fg:#e6edf3;--mut:#8b949e;--acc:#2f81f7;--field:#0d1117;
 --crit:#f85149;--high:#ff7b72;--med:#d29922;--low:#3fb950;--val:#3fb950;--cand:#d29922;--fp:#6e7681}
+:root[data-theme=light]{--bg:#f6f8fa;--panel:#ffffff;--edge:#d0d7de;--fg:#1f2328;--mut:#59636e;--acc:#0969da;--field:#ffffff}
 *{box-sizing:border-box}body{margin:0;font:14px/1.5 system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--fg)}
 header{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--edge);background:var(--panel)}
 header b{font-size:16px}header .sp{flex:1}
-select,input,button,textarea{font:inherit;color:var(--fg);background:#0d1117;border:1px solid var(--edge);border-radius:6px;padding:6px 8px}
-button{background:var(--acc);border-color:var(--acc);color:#fff;cursor:pointer}button.ghost{background:#0d1117;color:var(--fg)}
+select,input,button,textarea{font:inherit;color:var(--fg);background:var(--field);border:1px solid var(--edge);border-radius:6px;padding:6px 8px}
+button{background:var(--acc);border-color:var(--acc);color:#fff;cursor:pointer}button.ghost{background:var(--field);color:var(--fg)}
 button:hover{filter:brightness(1.1)}button:disabled{opacity:.5;cursor:not-allowed}
 .wrap{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:12px;max-width:1300px;margin:0 auto}
 .col{display:flex;flex-direction:column;gap:12px;min-width:0}
@@ -433,7 +434,7 @@ button:hover{filter:brightness(1.1)}button:disabled{opacity:.5;cursor:not-allowe
 #chatlog{height:300px;overflow:auto;display:flex;flex-direction:column;gap:8px;padding-right:4px}
 .msg{padding:8px 10px;border-radius:8px;max-width:90%}
 .msg.me{align-self:flex-end;background:#1f6feb33;border:1px solid #1f6feb55}
-.msg.sys{align-self:flex-start;background:#0d1117;border:1px solid var(--edge)}
+.msg.sys{align-self:flex-start;background:var(--field);border:1px solid var(--edge)}
 .msg.ev{align-self:stretch;background:transparent;border:0;color:var(--mut);font-family:ui-monospace,monospace;font-size:12px;padding:2px 4px}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .chatbar{display:flex;gap:8px;margin-top:8px}.chatbar input{flex:1}
@@ -447,8 +448,32 @@ th{color:var(--mut);font-weight:600}
 .tree li{padding:2px 0;border-left:2px solid var(--edge);padding-left:10px;margin-left:2px}
 .muted{color:var(--mut)}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}.grid2 label{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--mut)}
 .stat{display:flex;gap:14px;flex-wrap:wrap}.stat b{font-size:18px}.stat div{display:flex;flex-direction:column}
-.hidden{display:none}
+.hidden{display:none!important}
 @media(max-width:900px){.wrap{grid-template-columns:1fr}}
+/* settings modal */
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:flex-start;justify-content:center;z-index:50;padding:24px;overflow:auto}
+.sheet{background:var(--panel);border:1px solid var(--edge);border-radius:12px;width:100%;max-width:720px;display:flex;flex-direction:column;max-height:90vh}
+.sheettop,.sheetbot{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--edge)}
+.sheetbot{border-bottom:0;border-top:1px solid var(--edge);justify-content:flex-end}
+.sheettop b{font-size:15px}.sheettop .sp{flex:1}
+.tabs{display:flex;flex-wrap:wrap;gap:4px;padding:10px 12px 0}
+.tab{background:transparent;border:1px solid transparent;color:var(--mut);border-radius:6px 6px 0 0;padding:6px 10px}
+.tab.on{color:var(--fg);border-color:var(--edge);border-bottom-color:var(--panel);background:var(--field)}
+.panels{padding:16px;overflow:auto}
+.panel{display:flex;flex-direction:column;gap:10px}
+.prow{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:end;border:1px solid var(--edge);border-radius:8px;padding:10px}
+.prow label{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--mut)}
+.prow .full{grid-column:1/-1}
+.hint{font-size:12px;color:var(--mut)}
+.warn{color:var(--med);font-size:12px}
+.ladder{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.ladder li{display:flex;align-items:center;gap:8px;border:1px solid var(--edge);border-radius:8px;padding:6px 10px}
+.ladder li .nm{flex:1}
+.badge{display:inline-block;font-size:11px;padding:1px 7px;border-radius:999px;border:1px solid var(--edge);color:var(--mut)}
+.badge.ok{color:var(--val);border-color:var(--val)}
+.toggle{display:flex;align-items:center;gap:8px}
+.toggle input{width:auto}
+pre.out{background:var(--field);border:1px solid var(--edge);border-radius:6px;padding:8px;font-size:12px;white-space:pre-wrap;max-height:160px;overflow:auto}
 </style></head>
 <body>
 <header>
@@ -459,6 +484,7 @@ th{color:var(--mut);font-weight:600}
   <label class="muted" style="display:flex;gap:4px;align-items:center"><input type="checkbox" id="dry" style="width:auto"> dry-run</label>
   <button id="runbtn">▶ Run</button>
   <button class="ghost" id="dlbtn">⬇ Download report</button>
+  <button class="ghost" id="setbtn" title="Settings">⚙ Settings</button>
 </header>
 
 <div class="wrap">
@@ -506,6 +532,80 @@ th{color:var(--mut);font-weight:600}
       <h3>Attack-direction tree</h3>
       <div class="tree" id="tree"><span class="muted">—</span></div>
     </div>
+  </div>
+</div>
+
+<div id="settings" class="modal hidden">
+  <div class="sheet">
+    <div class="sheettop"><b>⚙ Settings</b><span class="sp"></span>
+      <button class="ghost" id="setclose">✕</button></div>
+    <div class="tabs">
+      <button class="tab on" data-tab="providers">Providers (API key)</button>
+      <button class="tab" data-tab="subs">Subscription CLI</button>
+      <button class="tab" data-tab="ollama">Local LLM</button>
+      <button class="tab" data-tab="ladder">Model ladder</button>
+      <button class="tab" data-tab="operator">Operator</button>
+      <button class="tab" data-tab="ctf">CTF</button>
+    </div>
+    <div class="panels">
+      <div class="panel" data-panel="providers">
+        <div class="hint">Hosted API providers. Choose <b>paste key</b> (stored on this machine) or <b>env var</b> (read from the environment at call time — nothing stored).</div>
+        <div id="httpList"></div>
+        <button class="ghost" id="addHttp">+ Add API provider</button>
+      </div>
+      <div class="panel hidden" data-panel="subs">
+        <div class="hint">CLIs you're already logged into (subscription). If a known one isn't installed, install it here (asks first) and log in.</div>
+        <div id="subList"></div>
+        <button class="ghost" id="addSub">+ Add CLI provider</button>
+      </div>
+      <div class="panel hidden" data-panel="ollama">
+        <div class="hint">Local models via <b>Ollama</b>. Nothing leaves your machine.</div>
+        <div id="ollamaList"></div>
+        <button class="ghost" id="addOllama">+ Add local model</button>
+      </div>
+      <div class="panel hidden" data-panel="ladder">
+        <div class="hint">Try providers top-to-bottom; fall back on error/refusal. Policy limits which run per phase.</div>
+        <ul class="ladder" id="ladder"></ul>
+        <div class="prow" style="grid-template-columns:1fr 1fr 1fr">
+          <label>map policy<select id="pol_map"><option>any</option><option>hosted_ok</option><option>local_only</option></select></label>
+          <label>exploit policy<select id="pol_exploit"><option>any</option><option>hosted_ok</option><option>local_only</option></select></label>
+          <label>report policy<select id="pol_report"><option>any</option><option>hosted_ok</option><option>local_only</option></select></label>
+        </div>
+      </div>
+      <div class="panel hidden" data-panel="operator">
+        <div class="prow" style="grid-template-columns:1fr">
+          <label class="full">Pentester name (appears on the report)<input id="s_name" placeholder="e.g. Avi Twil"></label>
+        </div>
+        <div class="prow" style="grid-template-columns:1fr">
+          <div class="toggle"><input type="checkbox" id="s_theme"> <label for="s_theme" style="color:var(--fg)">Light theme</label></div>
+        </div>
+        <div class="prow" style="grid-template-columns:1fr">
+          <div class="toggle"><input type="checkbox" id="s_sudo"> <label for="s_sudo" style="color:var(--fg)">Allow sudo (privileged scans)</label></div>
+          <div id="sudoPwWrap" class="full hidden">
+            <label class="hint">Sudo password (kept in memory only, never saved to disk, re-asked after restart)
+              <input type="password" id="s_sudopw" placeholder="••••••••" autocomplete="off"></label>
+            <button class="ghost" id="sudoPwBtn" style="margin-top:6px">Set sudo password</button>
+            <span class="hint" id="sudoPwMsg"></span>
+          </div>
+        </div>
+      </div>
+      <div class="panel hidden" data-panel="ctf">
+        <div class="hint" id="ctfEng">Applies to the selected engagement.</div>
+        <label class="hint full">Goals — what the LLM should look for<textarea id="c_goals" rows="3" placeholder="e.g. find user.txt and root.txt; enumerate web + SSH"></textarea></label>
+        <label class="hint">VPN config file (path on this machine)<input id="c_vpn" placeholder="/home/kali/htb.ovpn"></label>
+        <div class="prow full">
+          <label>Attack-box host<input id="c_ab_host" placeholder="10.10.14.1"></label>
+          <label>Attack-box user<input id="c_ab_user" placeholder="kali"></label>
+          <label class="full">Attack-box password (memory only) or key path below
+            <input type="password" id="c_ab_pw" autocomplete="off" placeholder="••••••••"></label>
+          <label class="full">SSH key path (optional, stored)<input id="c_ab_key" placeholder="/home/kali/.ssh/id_ed25519"></label>
+        </div>
+        <button class="ghost" id="ctfSave">Save CTF settings</button>
+        <span class="hint" id="ctfMsg"></span>
+      </div>
+    </div>
+    <div class="sheetbot"><span class="hint" id="setmsg"></span>
+      <button id="setsave">Save settings</button></div>
   </div>
 </div>
 
@@ -600,6 +700,159 @@ $('#runbtn').onclick=async()=>{
 };
 $('#dlbtn').onclick=()=>{ if(!ENG){chat('sys','No engagement selected.');return} window.location='/api/report?eng='+encodeURIComponent(ENG); };
 $('#engsel').onchange=async()=>{ENG=$('#engsel').value;await refreshAll()};
+
+/* ===== Settings ===== */
+let SET={}, HTTP=[], SUB=[], OLLAMA=[], PREF=[], PSTATUS={};
+function applyTheme(light){document.documentElement.setAttribute('data-theme',light?'light':'dark');}
+try{applyTheme(localStorage.getItem('atpt_theme')==='light');}catch(e){}
+
+function decompose(){
+  HTTP=[];SUB=[];OLLAMA=[];
+  const r=SET.reasoning||{}, provs=r.providers||{};
+  for(const [name,p] of Object.entries(provs)){
+    const b=p.backend;
+    if(b==='http_api')HTTP.push({name,api:p.api||'openai',model:p.model||'',endpoint:p.endpoint||'',mode:p.key_env?'env':'paste',key:p.key_env||'',has_key:!!p.has_key});
+    else if(b==='cli')SUB.push({name,cmd:p.cmd||name});
+    else if(b==='ollama')OLLAMA.push({name,model:p.model||'llama3.1',endpoint:p.endpoint||''});
+  }
+  PREF=(r.preference||[]).slice();
+  const pol=r.policy||{};
+  $('#pol_map').value=pol.map||'any';$('#pol_exploit').value=pol.exploit||'any';$('#pol_report').value=pol.report||'any';
+}
+function allNames(){return [...HTTP,...SUB,...OLLAMA].map(p=>p.name).filter(Boolean);}
+function reconcilePref(){const names=allNames();PREF=PREF.filter(n=>names.includes(n));names.forEach(n=>{if(!PREF.includes(n))PREF.push(n);});}
+
+function httpRow(p,i){return `<div class="prow" data-i="${i}" data-kind="http" style="grid-template-columns:1fr 1fr">
+  <label>Name<input class="f_name" value="${esc(p.name)}"></label>
+  <label>API<select class="f_api"><option value="anthropic"${p.api==='anthropic'?' selected':''}>anthropic</option><option value="openai"${p.api!=='anthropic'?' selected':''}>openai</option></select></label>
+  <label>Model<input class="f_model" value="${esc(p.model)}" placeholder="gpt-5 / claude-opus-5"></label>
+  <label>Key mode<select class="f_mode"><option value="paste"${p.mode==='paste'?' selected':''}>paste key</option><option value="env"${p.mode==='env'?' selected':''}>env var</option></select></label>
+  <label class="full">Endpoint (optional)<input class="f_ep" value="${esc(p.endpoint)}" placeholder="https://api.openai.com/v1/chat/completions"></label>
+  <label class="full">${p.mode==='env'?'Env var name':'API key'} <input class="f_key" type="${p.mode==='env'?'text':'password'}" autocomplete="off" value="${p.mode==='env'?esc(p.key):''}" placeholder="${p.mode==='env'?'ANTHROPIC_API_KEY':(p.has_key?'•••••• stored — blank keeps it':'paste secret')}"></label>
+  <button class="ghost f_del full">Remove</button></div>`;}
+function subRow(p,i){const s=PSTATUS[p.name];const known=s&&s.known;const inst=s&&s.installed;
+  return `<div class="prow" data-i="${i}" data-kind="sub" style="grid-template-columns:1fr 1fr">
+  <label>Name<input class="f_name" value="${esc(p.name)}" placeholder="claude / gemini / codex"></label>
+  <label>Command<input class="f_cmd" value="${esc(p.cmd)}" placeholder="claude -p"></label>
+  <div class="full row">${s?`<span class="badge ${inst?'ok':''}">${inst?'installed':'not installed'}</span>`:''}
+    ${(known&&!inst)?`<button class="ghost f_install">Install…</button>`:''}
+    ${(known&&inst)?`<button class="ghost f_login">Log in</button>`:''}
+    <span class="hint f_out"></span></div>
+  <button class="ghost f_del full">Remove</button></div>`;}
+function ollamaRow(p,i){return `<div class="prow" data-i="${i}" data-kind="ollama" style="grid-template-columns:1fr 1fr">
+  <label>Name<input class="f_name" value="${esc(p.name)}"></label>
+  <label>Model<input class="f_model" value="${esc(p.model)}" placeholder="llama3.1"></label>
+  <label class="full">Endpoint<input class="f_ep" value="${esc(p.endpoint)}" placeholder="http://localhost:11434/api/generate"></label>
+  <button class="ghost f_del full">Remove</button></div>`;}
+
+function renderProviders(){
+  $('#httpList').innerHTML=HTTP.map(httpRow).join('')||'<div class=hint>No API providers yet.</div>';
+  $('#subList').innerHTML=SUB.map(subRow).join('')||'<div class=hint>No CLI providers yet.</div>';
+  $('#ollamaList').innerHTML=OLLAMA.map(ollamaRow).join('')||'<div class=hint>No local models yet.</div>';
+  wireRows();
+}
+function renderLadder(){
+  reconcilePref();
+  $('#ladder').innerHTML=PREF.map((n,i)=>`<li data-n="${esc(n)}"><span class="nm">${i+1}. ${esc(n)}</span>
+    <button class="ghost l_up" ${i===0?'disabled':''}>↑</button>
+    <button class="ghost l_down" ${i===PREF.length-1?'disabled':''}>↓</button></li>`).join('')||'<div class=hint>Add providers first.</div>';
+  $('#ladder').querySelectorAll('.l_up').forEach((b,idx)=>{const li=b.closest('li');b.onclick=()=>{const i=PREF.indexOf(li.dataset.n);if(i>0){[PREF[i-1],PREF[i]]=[PREF[i],PREF[i-1]];renderLadder();}};});
+  $('#ladder').querySelectorAll('.l_down').forEach(b=>{const li=b.closest('li');b.onclick=()=>{const i=PREF.indexOf(li.dataset.n);if(i<PREF.length-1){[PREF[i+1],PREF[i]]=[PREF[i],PREF[i+1]];renderLadder();}};});
+}
+function syncFromDom(){
+  const rd=(row,cls)=>{const e=row.querySelector(cls);return e?e.value.trim():'';};
+  HTTP=[...document.querySelectorAll('.prow[data-kind=http]')].map(row=>{
+    const mode=rd(row,'.f_mode');const keyv=row.querySelector('.f_key').value;
+    return {name:rd(row,'.f_name'),api:rd(row,'.f_api'),model:rd(row,'.f_model'),endpoint:rd(row,'.f_ep'),
+            mode,key:keyv,has_key:HTTP.find(h=>h.name===rd(row,'.f_name'))?.has_key||false};});
+  SUB=[...document.querySelectorAll('.prow[data-kind=sub]')].map(row=>({name:rd(row,'.f_name'),cmd:rd(row,'.f_cmd')}));
+  OLLAMA=[...document.querySelectorAll('.prow[data-kind=ollama]')].map(row=>({name:rd(row,'.f_name'),model:rd(row,'.f_model'),endpoint:rd(row,'.f_ep')}));
+}
+function wireRows(){
+  document.querySelectorAll('.f_del').forEach(b=>b.onclick=()=>{syncFromDom();const row=b.closest('.prow');const k=row.dataset.kind,i=+row.dataset.i;
+    ({http:HTTP,sub:SUB,ollama:OLLAMA}[k]).splice(i,1);renderProviders();});
+  document.querySelectorAll('.f_mode').forEach(s=>s.onchange=()=>{syncFromDom();renderProviders();});
+  document.querySelectorAll('.f_install').forEach(b=>b.onclick=async()=>{
+    const name=b.closest('.prow').querySelector('.f_name').value.trim();const s=PSTATUS[name];
+    if(!s||!s.install){b.closest('.prow').querySelector('.f_out').textContent='not a known CLI — install it yourself';return;}
+    if(!confirm('Run this install command?\n\n'+s.install.join(' ')))return;
+    const out=b.closest('.prow').querySelector('.f_out');out.textContent='installing…';
+    const r=await api('/api/providers/install',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
+    out.textContent=r.ok?'installed ✓':('failed: '+((r.stderr||r.error||'').slice(0,120)));await loadStatuses();renderProviders();});
+  document.querySelectorAll('.f_login').forEach(b=>b.onclick=async()=>{
+    const name=b.closest('.prow').querySelector('.f_name').value.trim();const out=b.closest('.prow').querySelector('.f_out');
+    out.textContent='starting login…';
+    const r=await api('/api/providers/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
+    if(r.mode==='terminal')out.innerHTML='run in your terminal: <code>'+esc(r.command)+'</code>'+(r.help?' — '+esc(r.help):'');
+    else out.textContent=(r.stdout||r.help||'login started').slice(0,200);});
+}
+async function loadStatuses(){const r=await api('/api/providers/status');PSTATUS={};(r.providers||[]).forEach(p=>PSTATUS[p.name]=p);}
+
+function showTab(t){document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x.dataset.tab===t));
+  document.querySelectorAll('.panel').forEach(x=>x.classList.toggle('hidden',x.dataset.panel!==t));
+  if(t==='ladder')renderLadder();}
+document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{if(!['operator','ctf'].includes(b.dataset.tab))syncFromDom();showTab(b.dataset.tab);});
+
+async function openSettings(){
+  SET=await api('/api/settings');
+  decompose();
+  $('#s_name').value=SET.pentester_name||'';
+  $('#s_sudo').checked=!!SET.sudo_allowed;$('#sudoPwWrap').classList.toggle('hidden',!SET.sudo_allowed);
+  let light=false;try{light=localStorage.getItem('atpt_theme')==='light';}catch(e){}$('#s_theme').checked=light;
+  await loadStatuses();
+  renderProviders();renderLadder();
+  await loadCtf();
+  showTab('providers');
+  $('#settings').classList.remove('hidden');
+}
+function providersMap(){
+  const m={};
+  HTTP.forEach(p=>{if(!p.name)return;const c={backend:'http_api',api:p.api,model:p.model};if(p.endpoint)c.endpoint=p.endpoint;
+    if(p.mode==='env'){if(p.key)c.key_env=p.key;} else {if(p.key)c.api_key=p.key;}m[p.name]=c;});
+  SUB.forEach(p=>{if(!p.name)return;m[p.name]={backend:'cli',cmd:p.cmd||p.name};});
+  OLLAMA.forEach(p=>{if(!p.name)return;const c={backend:'ollama',model:p.model||'llama3.1'};if(p.endpoint)c.endpoint=p.endpoint;m[p.name]=c;});
+  return m;
+}
+$('#setsave').onclick=async()=>{
+  syncFromDom();reconcilePref();
+  const reasoning={providers:providersMap(),preference:PREF,
+    policy:{map:$('#pol_map').value,exploit:$('#pol_exploit').value,report:$('#pol_report').value}};
+  const body={pentester_name:$('#s_name').value.trim(),sudo_allowed:$('#s_sudo').checked,reasoning};
+  const r=await api('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  SET=r;decompose();renderProviders();
+  $('#setmsg').textContent='Saved ✓';setTimeout(()=>$('#setmsg').textContent='',1500);
+};
+$('#s_theme').onchange=()=>{applyTheme($('#s_theme').checked);try{localStorage.setItem('atpt_theme',$('#s_theme').checked?'light':'dark');}catch(e){}};
+$('#s_sudo').onchange=()=>$('#sudoPwWrap').classList.toggle('hidden',!$('#s_sudo').checked);
+$('#sudoPwBtn').onclick=async()=>{
+  const pw=$('#s_sudopw').value;
+  const r=await api('/api/settings/sudo-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
+  $('#s_sudopw').value='';$('#sudoPwMsg').textContent=r.has_password?'set for this session ✓':'cleared';};
+$('#addHttp').onclick=()=>{syncFromDom();HTTP.push({name:'',api:'openai',model:'',endpoint:'',mode:'paste',key:'',has_key:false});renderProviders();};
+$('#addSub').onclick=()=>{syncFromDom();SUB.push({name:'',cmd:''});renderProviders();};
+$('#addOllama').onclick=()=>{syncFromDom();OLLAMA.push({name:'',model:'llama3.1',endpoint:''});renderProviders();};
+
+async function loadCtf(){
+  $('#ctfEng').textContent=ENG?('Applies to engagement: '+ENG):'Select or create an engagement first.';
+  ['#c_goals','#c_vpn','#c_ab_host','#c_ab_user','#c_ab_pw','#c_ab_key'].forEach(s=>$(s).value='');
+  if(!ENG)return;
+  const c=await api('/api/settings/ctf?eng='+encodeURIComponent(ENG));
+  $('#c_goals').value=c.goals||'';$('#c_vpn').value=c.vpn_config_path||'';
+  const ab=c.attackbox||{};$('#c_ab_host').value=ab.host||'';$('#c_ab_user').value=ab.user||'';$('#c_ab_key').value=ab.key_path||'';
+  $('#c_ab_pw').placeholder=c.attackbox_has_password?'•••••• set this session':'••••••••';
+}
+$('#ctfSave').onclick=async()=>{
+  if(!ENG){$('#ctfMsg').textContent='no engagement selected';return;}
+  const body={goals:$('#c_goals').value,vpn_config_path:$('#c_vpn').value.trim(),
+    attackbox:{host:$('#c_ab_host').value.trim(),user:$('#c_ab_user').value.trim(),
+               password:$('#c_ab_pw').value,key_path:$('#c_ab_key').value.trim()}};
+  const r=await api('/api/settings/ctf?eng='+encodeURIComponent(ENG),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(r.error){$('#ctfMsg').textContent='⚠ '+r.error;return;}
+  $('#c_ab_pw').value='';$('#ctfMsg').textContent='Saved ✓';setTimeout(()=>$('#ctfMsg').textContent='',1500);
+};
+$('#setbtn').onclick=openSettings;
+$('#setclose').onclick=()=>$('#settings').classList.add('hidden');
+$('#settings').onclick=e=>{if(e.target.id==='settings')$('#settings').classList.add('hidden');};
 
 chat('sys','Welcome. Step 1: define scope &amp; target (or <b>Load demo</b>). Step 2: <b>run</b>. Then download the PTES report.');
 refreshEngagements();
