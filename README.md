@@ -45,8 +45,15 @@ Modules self-sequence on tokens (`target → asset → finding → validated_fin
 Zero-dependency core — Python ≥ 3.10 stdlib only. The optional scanners are never
 installed silently; add them with `--with-tools`.
 
+**One-line install:**
+
 ```bash
-git clone <this-repo> atpt && cd atpt
+git clone https://github.com/avitwil/ATPTmaster.git atpt && cd atpt && ./install.sh
+```
+
+More options:
+
+```bash
 ./install.sh                 # core setup + report which optional tools are present
 ./install.sh --pipx          # also expose the `atpt` command (via pipx)
 ./install.sh --with-tools    # also install the optional scanners (sudo apt + go install)
