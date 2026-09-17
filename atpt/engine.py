@@ -76,13 +76,21 @@ class Orchestrator:
                          "gated": self._needs_gate(mode, mod)})
         return rows
 
-    def run(self, eng: dict, mode: str, dry_run: bool = False) -> dict:
+    def run(self, eng: dict, mode: str, dry_run: bool = False, control=None) -> dict:
         """Process runnable modules. step: one module. semi/full: cascade until
-        the queue drains or (semi) an intrusive module needs approval."""
+        the queue drains or (semi) an intrusive module needs approval.
+
+        `control`, if given, is called at each module boundary; returning False
+        halts the run gracefully (used for operator pause/stop between steps)."""
         eid = eng["id"]
-        executed, gated_on = [], None
+        executed, gated_on, halted = [], None, False
         attempted: set = set()            # processed this call — never reselect (avoids loops)
         while True:
+            if control is not None and not control():
+                self.store.add_event(eid, None, None, "warn", "run_halted",
+                                     "run halted by operator (between steps)", None)
+                halted = True
+                break
             pending = [m for m in self._pending(eng, mode) if m.id not in attempted]
             if not pending:
                 break
@@ -117,4 +125,4 @@ class Orchestrator:
             executed.append(mod.id)
             if mode == "step":
                 break
-        return {"executed": executed, "gated_on": gated_on, "dry_run": dry_run}
+        return {"executed": executed, "gated_on": gated_on, "dry_run": dry_run, "halted": halted}

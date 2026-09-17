@@ -140,6 +140,31 @@ class WebSettingsTest(unittest.TestCase):
         st, _, _, _ = self._post("/api/mode", {"mode": "yolo"}, eng="htb1")
         self.assertEqual(st, 400)
 
+    # --- background run control ---------------------------------------------
+    def test_run_status_idle_then_start(self):
+        self._post("/api/demo", {})
+        _, _, s0, _ = self._get("/api/run/status", eng="demo")
+        self.assertEqual(json.loads(s0)["status"], "idle")
+        # step mode runs a single module then finishes (no slow intrusive scanners)
+        st, _, body, _ = self._post("/api/run/start", {"mode": "step"}, eng="demo")
+        self.assertEqual(st, 200)
+        self.assertIn(json.loads(body)["status"], ("running", "done"))
+        import time
+        s = {"status": "running"}
+        for _ in range(100):
+            s = json.loads(self._get("/api/run/status", eng="demo")[2])
+            if s["status"] in ("done", "stopped", "paused", "gated"):
+                break
+            time.sleep(0.1)
+        self.assertIn(s["status"], ("done", "gated"))
+        self.assertIsNotNone(s.get("last"))
+
+    def test_run_control_on_idle_is_safe(self):
+        self._post("/api/demo", {})
+        st, _, body, _ = self._post("/api/run/control", {"action": "stop"}, eng="demo")
+        self.assertEqual(st, 200)
+        self.assertEqual(json.loads(body)["status"], "idle")
+
     # --- live models --------------------------------------------------------
     def test_models_unknown_provider_400(self):
         st, _, body, _ = self._get("/api/models", provider="nope")

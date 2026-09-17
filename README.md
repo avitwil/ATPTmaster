@@ -95,38 +95,56 @@ python3 -m unittest discover -s tests
 
 ## Web console
 
-`atpt serve` opens a single-page console:
+`atpt serve` opens a single-page console: the **logo** sits top-right, a **☰ menu**
+(top-left) holds all settings, **Run** is top-right, and the body is **chat + status
+on the left**, **findings + attack-direction tree on the right**.
 
-1. **Define scope & target** (required before any run) — or **Load demo**.
-2. **Chat control** — `run` / `plan` / `status` / `approve <module>` / `report`, plus buttons.
-3. **Findings** table and an **attack-direction tree** (the PTT, grouped by domain, ranked by severity).
-4. **Download report** — the PTES Markdown deliverable.
+- **Run / Pause / Stop** — Run executes in the background; while it runs the button
+  becomes **⏸ Pause** and **⏹ Stop**, which halt gracefully at the next module boundary
+  (a running scanner finishes first). Approvals for intrusive steps still gate in `semi`.
+- **Chat control** — `run` / `plan` / `status` / `approve <module>` / `report`.
+- **Findings** table and an **attack-direction tree** (grouped by domain, ranked by severity).
 
-### ⚙ Settings
+### ☰ Menu
 
-A **Settings** dropdown (header) configures, without editing JSON:
+Everything is configured in the menu (no JSON editing), grouped as:
 
-- **Providers (API key)** — hosted providers; per provider, *paste* a key (stored
-  on this machine) **or** name an *env var* (read at call time, nothing stored).
-  Stored keys are **redacted** everywhere they're read back.
-- **Subscription CLI** — CLIs you're logged into. **Claude, Gemini and Codex are
-  offered by default** (or add a **custom** one with its own name + full command).
-  One **Install (auto)** click installs any missing dependency (Node.js + npm) and
-  the CLI itself under `sudo` — the only thing you're asked for is your **sudo
-  password** (memory-only). The reasoning command is the resolved binary path
-  (e.g. `/usr/bin/claude -p`), so runs don't depend on `PATH`.
-- **Local LLM** — Ollama models. **Model ladder** — order the fallback preference and
-  set a per-phase policy (`any` / `hosted_ok` / `local_only`).
-- **Operator** — pentester name (appears on the report), light/dark theme, and
-  **Allow sudo** (privileged scans). The sudo password is **held in memory only** —
-  never written to disk, never logged, re-asked after a restart.
-- **CTF** (per engagement) — VPN config path, **goals** (injected into the LLM's
-  prompts so it knows the objective), and attack-box host/user. The attack-box SSH
-  password, like the sudo password, is **kept in memory only**.
+**User** — *User info*: name (appears on the report), company, phone, email.
 
-Provider/ladder/name/sudo settings are global; CTF settings attach to the selected
-engagement. Reasoning config set here is used by runs (engagement config overrides
-the global default).
+**AI settings**
+- *API providers* — hosted providers; per provider *paste* a key (stored on this
+  machine) **or** name an *env var* (read at call time, nothing stored). Stored keys
+  are **redacted** everywhere they're read back.
+- *Subscription CLI* — **Claude, Gemini and Codex by default** (plus a **custom** CLI
+  option with its own name + full command). One **Install (auto)** click installs any
+  missing dependency (Node.js + npm) and the CLI under `sudo` — the only prompt is your
+  **sudo password** (memory-only). The reasoning command is the resolved binary path
+  (e.g. `/usr/bin/claude -p`), independent of `PATH`.
+- *Local LLM* — Ollama models.
+- *Models* — **live model lists** fetched per provider (OpenAI `/v1/models`, Anthropic
+  `/v1/models`, Ollama `/api/tags`).
+
+**Scope** — *Target & scope*: domain-typed scope (Infra / Web / API / AI / Cloud /
+Mobile / Wireless); tick the domains in play and list what's **in scope** and
+**out of scope** per domain (e.g. Infra out-of-scope IPs/CIDRs). *CTF / engagement*:
+VPN config path, **goals** (injected into LLM prompts), attack-box host/user (its SSH
+password is memory-only, like sudo).
+
+**App settings**
+- *Mode* — `step` (approve each step) / `semi` (approve only exploits & attacks) /
+  `full` (auto).
+- *Appearance* — **light / dark / system** theme, and **Allow sudo** (its password is
+  held in memory only — never on disk, never logged, re-asked after a restart).
+- *Model ladder* — an ordered list of **specific models** (picked from the fetched
+  lists) each with an **effort level**; tried top-to-bottom with per-phase policy
+  (`any` / `hosted_ok` / `local_only`). Effort is sent as `reasoning_effort` to
+  OpenAI-style providers.
+- *Report* — customize the PTES report: include/exclude findings, add your own
+  **note** (mitigation / impact) and **screenshot file paths** per finding, then
+  **Download**.
+
+Provider/model/user/sudo settings are global; scope, CTF and report settings attach to
+the selected engagement (an engagement's reasoning config overrides the global default).
 
 ## Connecting an LLM (optional, for adaptive reasoning)
 

@@ -11,6 +11,7 @@ import copy
 import importlib.util
 import json
 import re
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
@@ -21,6 +22,9 @@ from .registry import discover
 from .state import SQLiteStore
 
 _SEV_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+# Background run control (stop-between-steps). eid -> {halt: Event, status, last}.
+_RUNS: dict = {}
+_RUNS_LOCK = threading.Lock()
 # Engagement ids become filesystem path segments (var/reports/<id>.md) and scope
 # filenames, so they are strictly whitelisted — no slashes, no dot-only ids.
 _VALID_EID = re.compile(r"[A-Za-z0-9_-]{1,64}$")
@@ -132,6 +136,52 @@ class WebApp:
     def _orch(self, store) -> Orchestrator:
         return Orchestrator(store, discover(self.project_dir / "modules", self.project_dir),
                             self.project_dir)
+
+    # ---- background run control (stop-between-steps) ------------------------
+    def _run_status(self, eid) -> dict:
+        with _RUNS_LOCK:
+            r = _RUNS.get(eid)
+            return {"status": r["status"], "last": r.get("last")} if r else {"status": "idle"}
+
+    def _start_run(self, eid, mode):
+        with _RUNS_LOCK:
+            r = _RUNS.get(eid)
+            if r and r["status"] == "running":
+                return self._json(200, {"status": "running", "already": True})
+            halt = threading.Event()
+            _RUNS[eid] = {"halt": halt, "status": "running", "last": None}
+
+        def worker():
+            store = self._store()
+            eng = store.get_engagement(eid)
+            try:
+                res = self._orch(store).run(eng, mode, control=lambda: not halt.is_set())
+            except Exception as exc:
+                store.add_event(eid, None, None, "error", "run_error", str(exc), None)
+                res = {"executed": [], "error": str(exc)}
+            with _RUNS_LOCK:
+                paused = _RUNS.get(eid, {}).get("_pause")
+                st = ("paused" if (halt.is_set() and paused) else
+                      "stopped" if halt.is_set() else
+                      "gated" if res.get("gated_on") else "done")
+                _RUNS[eid] = {"halt": halt, "status": st, "last": res}
+
+        t = threading.Thread(target=worker, daemon=True)
+        with _RUNS_LOCK:
+            _RUNS[eid]["thread"] = t
+        t.start()
+        return self._json(200, {"status": "running", "started": True})
+
+    def _control_run(self, eid, action):
+        with _RUNS_LOCK:
+            r = _RUNS.get(eid)
+            if not r or r["status"] != "running":
+                return self._json(200, {"status": r["status"] if r else "idle"})
+            if action in ("pause", "stop"):
+                r["_pause"] = (action == "pause")
+                r["halt"].set()
+                return self._json(200, {"status": "stopping"})
+        return self._json(400, {"error": "unknown action"})
 
     # ---- helpers ------------------------------------------------------------
     @staticmethod
@@ -269,6 +319,12 @@ class WebApp:
                 return self._json(200, self._get_ctf(store, eid))
             if method == "POST":
                 return self._save_ctf(store, eid, data)
+        if path == "/api/run/start" and method == "POST":
+            return self._start_run(eid, data.get("mode") or store.get_engagement(eid)["mode"])
+        if path == "/api/run/control" and method == "POST":
+            return self._control_run(eid, data.get("action"))
+        if path == "/api/run/status" and method == "GET":
+            return self._json(200, self._run_status(eid))
         if path == "/api/scope" and method == "GET":
             eng = store.get_engagement(eid)
             return self._json(200, {"scope": json.loads(eng.get("scope") or "{}"),
@@ -883,16 +939,38 @@ async function send(){
   chat('sys',r.reply);await refreshAll();
 }
 $('#sendbtn').onclick=send;$('#chatin').addEventListener('keydown',e=>{if(e.key==='Enter')send()});
+let RUNPOLL=null, RUNBUSY=false;
+function setRunUI(status){
+  const running=(status==='running'||status==='stopping');
+  $('#runbtn').classList.toggle('hidden',running);
+  $('#pausebtn').classList.toggle('hidden',!running);
+  $('#stopbtn').classList.toggle('hidden',!running);
+  $('#runbtn').textContent=(status==='paused')?'▶ Resume':'▶ Run';
+}
+async function pollRun(){
+  if(!ENG){setRunUI('idle');return;}
+  const s=await api('/api/run/status?eng='+encodeURIComponent(ENG));
+  setRunUI(s.status);
+  if(s.status==='running'||s.status==='stopping'){ RUNBUSY=true; if(!RUNPOLL)RUNPOLL=setInterval(pollRun,1500); return; }
+  if(RUNPOLL){clearInterval(RUNPOLL);RUNPOLL=null;}
+  if(RUNBUSY){ RUNBUSY=false;
+    if(s.last)chat('sys','Run <b>'+esc(s.status)+'</b>: executed '+JSON.stringify(s.last.executed||[])+
+      (s.last.gated_on?' · ⏸ before <b>'+esc(s.last.gated_on)+'</b> (approve to continue)':'')+
+      (s.last.halted?' · ⏹ halted between steps':''));
+    await refreshAll();
+  }
+}
 $('#runbtn').onclick=async()=>{
   if(!ENG){chat('sys','Create or select an engagement first (☰ menu → Scope).');return}
-  const r=await api('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({eng:ENG,mode:MODE})});
-  chat('sys','Ran <b>'+MODE+'</b>: executed '+JSON.stringify(r.result.executed)+
-    (r.result.gated_on?' · ⏸ paused before <b>'+esc(r.result.gated_on)+'</b> (approve to continue)':''));
-  await refreshAll();
+  await api('/api/run/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({eng:ENG,mode:MODE})});
+  chat('sys','▶ Run started (<b>'+MODE+'</b>)…'); setRunUI('running'); RUNBUSY=true; pollRun();
 };
+function runControl(action,msg){ if(!ENG)return; chat('sys',msg);
+  api('/api/run/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({eng:ENG,action})}); }
+$('#pausebtn').onclick=()=>runControl('pause','⏸ pausing after the current step…');
+$('#stopbtn').onclick=()=>runControl('stop','⏹ stopping after the current step…');
 function downloadReport(){ if(!ENG){chat('sys','No engagement selected.');return} window.location='/api/report?eng='+encodeURIComponent(ENG); }
-$('#engsel').onchange=async()=>{ENG=$('#engsel').value;syncMode();await refreshAll()};
+$('#engsel').onchange=async()=>{ENG=$('#engsel').value;syncMode();await refreshAll();pollRun();};
 
 /* ===== Settings ===== */
 let SET={}, HTTP=[], SUB=[], OLLAMA=[], PREF=[], PSTATUS={}, MODELS={}, LADDER=[];
@@ -1163,7 +1241,7 @@ $('#setclose').onclick=()=>$('#settings').classList.add('hidden');
 $('#settings').onclick=e=>{if(e.target.id==='settings')$('#settings').classList.add('hidden');};
 
 chat('sys','Welcome. Step 1: define scope &amp; target (or <b>Load demo</b>). Step 2: <b>run</b>. Then download the PTES report.');
-refreshEngagements();
+refreshEngagements().then(pollRun);
 setInterval(()=>{if(ENG)refreshStatus()},2500);
 </script>
 </body></html>"""
