@@ -7,16 +7,18 @@ HTTP server; each request opens its own SQLite connection (thread-safe by constr
 Binds to 127.0.0.1 by default — this is an operator console, not a public endpoint.
 """
 from __future__ import annotations
+import base64
 import copy
 import importlib.util
 import json
+import os
 import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
-from . import models, privilege, providers, selfupdate
+from . import models, privilege, providers, selfupdate, vpn
 from .engine import Orchestrator
 from .registry import discover
 from .state import SQLiteStore
@@ -270,6 +272,19 @@ class WebApp:
                 return self._json(200, _redact_settings(self._store().get_settings()))
             if method == "POST":
                 return self._save_settings(data)
+        if path == "/api/settings/export" and method == "GET":
+            # everything persisted (providers, keys, ladder, user info). The sudo and
+            # attack-box passwords live only in memory, so they are never in here.
+            blob = json.dumps(self._store().get_settings(), indent=2).encode()
+            return (200, "application/json; charset=utf-8", blob,
+                    {"Content-Disposition": 'attachment; filename="atptmaster-settings.json"'})
+        if path == "/api/settings/import" and method == "POST":
+            s = data.get("settings")
+            if not isinstance(s, dict):
+                return self._json(400, {"error": "settings must be a JSON object"})
+            s.pop("sudo_password", None)              # never accept a sudo password from a file
+            self._store().set_settings(s)
+            return self._json(200, _redact_settings(self._store().get_settings()))
         if path == "/api/settings/sudo-password":
             if method != "POST":
                 return self._json(405, {"error": "POST only; this value is never read back"})
@@ -284,6 +299,10 @@ class WebApp:
             return self._json(200, selfupdate.check(self.project_dir))
         if path == "/api/update/apply" and method == "POST":
             return self._json(200, selfupdate.apply(self.project_dir))
+        if path == "/api/vpn/status" and method == "GET":
+            return self._json(200, vpn.status())
+        if path == "/api/vpn/disconnect" and method == "POST":
+            return self._json(200, vpn.disconnect())
         if path == "/api/providers/install" and method == "POST":
             return self._provider_install(data)
         if path == "/api/providers/login" and method == "POST":
@@ -323,6 +342,10 @@ class WebApp:
                 return self._json(200, self._get_ctf(store, eid))
             if method == "POST":
                 return self._save_ctf(store, eid, data)
+        if path == "/api/upload" and method == "POST":
+            return self._upload(eid, data)
+        if path == "/api/vpn/connect" and method == "POST":
+            return self._vpn_connect(store, eid, data)
         if path == "/api/run/start" and method == "POST":
             return self._start_run(eid, data.get("mode") or store.get_engagement(eid)["mode"])
         if path == "/api/run/control" and method == "POST":
@@ -448,6 +471,44 @@ class WebApp:
         except Exception as exc:
             return self._json(200, {"mode": "terminal", "command": command,
                                     "help": entry.get("help", ""), "note": str(exc)})
+
+    def _upload(self, eid, data):
+        """Save a file the operator picked in the browser (its bytes, base64) under
+        var/uploads/<eid>/ and return the server-side path to use. The browser can't
+        expose the real local path, so we persist a copy and reference that."""
+        name = os.path.basename((data.get("name") or "").strip())
+        content = data.get("content_b64") or ""
+        if not name or not content:
+            return self._json(400, {"error": "name and content_b64 required"})
+        try:
+            raw = base64.b64decode(content.split(",")[-1])         # strip data: prefix if present
+        except Exception:
+            return self._json(400, {"error": "invalid base64 content"})
+        if len(raw) > 25 * 1024 * 1024:
+            return self._json(400, {"error": "file too large (max 25 MB)"})
+        safe = re.sub(r"[^A-Za-z0-9._-]", "_", name)[:120] or "file"
+        dest_dir = self.project_dir / "var" / "uploads" / eid
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / safe
+        dest.write_bytes(raw)
+        return self._json(200, {"path": str(dest.resolve()), "name": safe, "size": len(raw)})
+
+    def _vpn_connect(self, store, eid, data):
+        """Bring up the engagement's stored .ovpn in the background. openvpn needs
+        root, so it uses the sudo password (memory-only); asks for it if unset."""
+        cfg = json.loads(store.get_engagement(eid).get("config") or "{}")
+        path = (cfg.get("ctf") or {}).get("vpn_config_path") or data.get("config")
+        if not path:
+            return self._json(400, {"error": "no VPN config set for this engagement (Scope → CTF)"})
+        pw = data.get("sudo_password")
+        if pw:
+            privilege.set_password(pw)
+        if not privilege.current_password() and not vpn.is_up():
+            return self._json(200, {"needs_sudo": True, "message": "sudo password required to start the VPN"})
+        res = vpn.connect(path, privilege.current_password())
+        store.add_event(eid, None, None, "info", "vpn_connect",
+                        f"VPN connect requested ({path}): {res.get('status') or res.get('error')}", None)
+        return self._json(200, res)
 
     def _get_ctf(self, store, eid) -> dict:
         cfg = json.loads(store.get_engagement(eid).get("config") or "{}")
@@ -704,6 +765,7 @@ pre.out{background:var(--field);border:1px solid var(--edge);border-radius:6px;p
         <button class="nav" data-tab="appearance">Appearance</button>
         <button class="nav" data-tab="ladder">Model ladder</button>
         <button class="nav" data-tab="report">Report</button>
+        <button class="nav" data-tab="backup">Backup</button>
         <button class="nav" data-tab="update">Update</button>
       </nav>
       <div class="panels">
@@ -738,11 +800,13 @@ pre.out{background:var(--field);border:1px solid var(--edge);border-radius:6px;p
         <div class="panel hidden" data-panel="scope">
           <div class="hint">Define the target and per-domain scope. Tick the domains in play; for each, list what's in scope and (optionally) what's explicitly out.</div>
           <div class="grid2">
-            <label>Engagement id<input id="f_id" placeholder="acme-2026"></label>
-            <label>Target name<input id="f_name" placeholder="Acme external"></label>
+            <label>Engagement id<input id="f_id" placeholder="acme-2026 / thm-box"></label>
+            <label>Target name<input id="f_name" placeholder="THM: Infinity Pool"></label>
+            <label class="full"><b>Target (IP or CIDR)</b> — the primary in-scope host<input id="f_target" placeholder="10.10.10.10  or  10.10.10.0/24"></label>
             <label>Default mode<select id="f_mode"><option>step</option><option selected>semi</option><option>full</option></select></label>
           </div>
-          <div id="scopeDomains" style="margin-top:10px;display:flex;flex-direction:column;gap:8px"></div>
+          <div class="hint" style="margin-top:6px">Optional — refine with per-domain scope below (Web/API hosts, extra Infra ranges, out-of-scope):</div>
+          <div id="scopeDomains" style="margin-top:6px;display:flex;flex-direction:column;gap:8px"></div>
           <div class="row" style="margin-top:10px">
             <button id="createbtn">Create / update engagement</button>
             <span class="hint" id="createmsg"></span>
@@ -751,7 +815,14 @@ pre.out{background:var(--field);border:1px solid var(--edge);border-radius:6px;p
         <div class="panel hidden" data-panel="ctf">
           <div class="hint" id="ctfEng">Applies to the selected engagement.</div>
           <label class="hint full">Goals — what the LLM should look for<textarea id="c_goals" rows="3" placeholder="e.g. find user.txt and root.txt; enumerate web + SSH"></textarea></label>
-          <label class="hint">VPN config file (path on this machine)<input id="c_vpn" placeholder="/home/kali/htb.ovpn"></label>
+          <label class="hint full">VPN config (.ovpn)
+            <div class="row"><input id="c_vpn" readonly placeholder="none selected" style="flex:1">
+              <input type="file" id="c_vpn_file" accept=".ovpn,.conf" hidden>
+              <button class="ghost" id="c_vpn_pick">Choose…</button></div>
+          </label>
+          <div class="row"><button class="ghost" id="vpnConnect">▶ Connect VPN (background)</button>
+            <button class="ghost" id="vpnDisconnect">Disconnect</button>
+            <span class="hint" id="vpnStatus"></span></div>
           <div class="prow full">
             <label>Attack-box host<input id="c_ab_host" placeholder="10.10.14.1"></label>
             <label>Attack-box user<input id="c_ab_user" placeholder="kali"></label>
@@ -809,6 +880,16 @@ pre.out{background:var(--field);border:1px solid var(--edge);border-radius:6px;p
             <button class="ghost" id="rp_dl">⬇ Download PTES report</button>
             <span class="hint" id="rp_msg"></span>
           </div>
+        </div>
+        <div class="panel hidden" data-panel="backup">
+          <div class="hint">Save all settings to a file (providers, <b>API keys</b>, model ladder, user info — everything except the in-memory sudo &amp; attack-box passwords), or load them back from a file.</div>
+          <div class="row" style="margin-top:8px">
+            <button id="bk_export">⬇ Save settings to file</button>
+            <input type="file" id="bk_file" accept=".json,application/json" hidden>
+            <button class="ghost" id="bk_import">⬆ Load settings from file…</button>
+            <span class="hint" id="bk_msg"></span>
+          </div>
+          <div class="warn" style="margin-top:6px">The exported file contains your API keys in cleartext — store it safely.</div>
         </div>
         <div class="panel hidden" data-panel="update">
           <div class="hint">Update ATPTmaster from its GitHub repository (fast-forward pull of the current branch).</div>
@@ -908,6 +989,7 @@ function renderScope(){
     cb.onchange=()=>row.querySelector('.d_body').classList.toggle('hidden',!cb.checked);
   });
 }
+function isIpOrCidr(v){ return /^[0-9]{1,3}(\.[0-9]{1,3}){3}(\/[0-9]{1,2})?$/.test(v) || v.includes(':'); }
 function collectScope(){
   const domains={};
   $('#scopeDomains').querySelectorAll('.prow').forEach(row=>{
@@ -915,14 +997,19 @@ function collectScope(){
     const inv=row.querySelector('.d_in'); const outv=row.querySelector('.d_out');
     domains[key]={enabled, in:split(inv?inv.value:''), out:split(outv?outv.value:'')};
   });
-  return {domains};
+  const scope={domains};
+  const target=$('#f_target').value.trim();
+  if(target){ if(isIpOrCidr(target)) scope.in_scope_cidrs=[target]; else scope.in_scope_domains=[target]; }
+  return scope;
 }
 async function loadScope(){
   SCOPEDATA={};
   if(ENG){ try{
     const st=await api('/api/scope?eng='+encodeURIComponent(ENG));
-    SCOPEDATA=(st.scope&&st.scope.domains)||{};
+    const sc=st.scope||{};
+    SCOPEDATA=sc.domains||{};
     $('#f_id').value=ENG; $('#f_name').value=st.name||''; $('#f_mode').value=st.mode||'semi';
+    $('#f_target').value=(sc.in_scope_cidrs&&sc.in_scope_cidrs[0])||(sc.in_scope_domains&&sc.in_scope_domains[0])||'';
   }catch(e){} }
   renderScope();
 }
@@ -1158,8 +1245,14 @@ async function loadReport(){
     return `<div class="prow" data-fid="${x.id}" style="grid-template-columns:1fr">
       <div class="toggle"><input type="checkbox" class="r_inc" ${inc?'checked':''}> <label style="color:var(--fg)"><span class="pill sev-${sevCls(x.severity)}">${esc(x.severity||'info')}</span> <b>${esc(x.title)}</b></label></div>
       <label class="hint">Operator note (mitigation / impact)<textarea class="r_note" rows="2">${esc(c.note||'')}</textarea></label>
-      <label class="hint">Screenshot file paths (comma / newline)<textarea class="r_shots" rows="1" placeholder="/home/kali/shots/finding.png">${esc((c.screenshots||[]).join(', '))}</textarea></label>
+      <label class="hint">Screenshots<textarea class="r_shots" rows="1" placeholder="pick a file, or paste paths">${esc((c.screenshots||[]).join(', '))}</textarea></label>
+      <div class="row"><input type="file" class="r_shot_file" accept="image/*" hidden><button class="ghost r_shot_pick">+ Add screenshot</button></div>
     </div>`;}).join('');
+  box.querySelectorAll('.r_shot_pick').forEach(b=>b.onclick=()=>b.closest('.prow').querySelector('.r_shot_file').click());
+  box.querySelectorAll('.r_shot_file').forEach(inp=>inp.onchange=async e=>{const f=e.target.files[0]; if(!f)return;
+    const ta=inp.closest('.prow').querySelector('.r_shots'); const r=await uploadPicked(f);
+    if(r.error){$('#rp_msg').textContent='⚠ '+esc(r.error);return;}
+    ta.value=(ta.value.trim()?ta.value.trim()+', ':'')+r.path;});
 }
 async function saveReport(){
   if(!ENG){$('#rp_msg').textContent='select an engagement';return;} const findings={};
@@ -1170,6 +1263,19 @@ async function saveReport(){
   $('#rp_msg').textContent='Saved ✓';setTimeout(()=>$('#rp_msg').textContent='',1500);
 }
 $('#rp_save')&&($('#rp_save').onclick=saveReport);
+
+/* ---- settings backup: export / import ---- */
+$('#bk_export')&&($('#bk_export').onclick=()=>{ window.location='/api/settings/export'; });
+$('#bk_import')&&($('#bk_import').onclick=()=>$('#bk_file').click());
+$('#bk_file')&&($('#bk_file').onchange=async e=>{ const f=e.target.files[0]; if(!f)return;
+  let obj; try{ obj=JSON.parse(await f.text()); }catch(err){ $('#bk_msg').textContent='⚠ not valid JSON'; return; }
+  const r=await api('/api/settings/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({settings:obj})});
+  if(r.error){ $('#bk_msg').textContent='⚠ '+esc(r.error); return; }
+  SET=r; await loadStatuses(); decompose(); renderProviders(); renderLadder();
+  $('#ui_name').value=(SET.user_info||{}).name||''; $('#ui_company').value=(SET.user_info||{}).company||'';
+  $('#ui_phone').value=(SET.user_info||{}).phone||''; $('#ui_email').value=(SET.user_info||{}).email||'';
+  $('#bk_msg').textContent='Loaded ✓'; setTimeout(()=>$('#bk_msg').textContent='',2000);
+  e.target.value='';});
 
 /* ---- self update ---- */
 async function checkUpdate(){
@@ -1257,6 +1363,7 @@ async function loadCtf(){
   $('#c_goals').value=c.goals||'';$('#c_vpn').value=c.vpn_config_path||'';
   const ab=c.attackbox||{};$('#c_ab_host').value=ab.host||'';$('#c_ab_user').value=ab.user||'';$('#c_ab_key').value=ab.key_path||'';
   $('#c_ab_pw').placeholder=c.attackbox_has_password?'•••••• set this session':'••••••••';
+  vpnStatus();
 }
 $('#ctfSave').onclick=async()=>{
   if(!ENG){$('#ctfMsg').textContent='no engagement selected';return;}
@@ -1267,6 +1374,34 @@ $('#ctfSave').onclick=async()=>{
   if(r.error){$('#ctfMsg').textContent='⚠ '+r.error;return;}
   $('#c_ab_pw').value='';$('#ctfMsg').textContent='Saved ✓';setTimeout(()=>$('#ctfMsg').textContent='',1500);
 };
+
+/* ---- file picker (upload -> server path) + background VPN ---- */
+function fileToB64(file){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(file);});}
+async function uploadPicked(file){ if(!ENG)return {error:'select an engagement first'};
+  const b64=await fileToB64(file);
+  return api('/api/upload?eng='+encodeURIComponent(ENG),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:file.name,content_b64:b64})});
+}
+let VPNPOLL=null;
+async function vpnStatus(){ const s=await api('/api/vpn/status');
+  const m={down:'○ down',connecting:'◐ connecting…',connected:'● connected',error:'⚠ '+(s.error||'error')};
+  $('#vpnStatus').textContent=m[s.status]||s.status;
+  if(s.status!=='connecting'&&VPNPOLL){clearInterval(VPNPOLL);VPNPOLL=null;} return s.status; }
+$('#c_vpn_pick')&&($('#c_vpn_pick').onclick=()=>$('#c_vpn_file').click());
+$('#c_vpn_file')&&($('#c_vpn_file').onchange=async e=>{const f=e.target.files[0]; if(!f)return;
+  $('#c_vpn').value='uploading…'; const r=await uploadPicked(f);
+  if(r.error){$('#c_vpn').value='';$('#ctfMsg').textContent='⚠ '+esc(r.error);return;}
+  $('#c_vpn').value=r.path;
+  await api('/api/settings/ctf?eng='+encodeURIComponent(ENG),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({vpn_config_path:r.path})});
+  $('#ctfMsg').textContent='VPN config saved ✓';setTimeout(()=>$('#ctfMsg').textContent='',1500);});
+$('#vpnConnect')&&($('#vpnConnect').onclick=async()=>{ if(!ENG){$('#ctfMsg').textContent='select an engagement';return;}
+  $('#vpnStatus').textContent='starting…';
+  let r=await api('/api/vpn/connect?eng='+encodeURIComponent(ENG),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+  if(r.needs_sudo){ const pw=prompt('sudo password (to start OpenVPN in the background):'); if(!pw){$('#vpnStatus').textContent='cancelled';return;}
+    r=await api('/api/vpn/connect?eng='+encodeURIComponent(ENG),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sudo_password:pw})}); }
+  if(r.error){$('#vpnStatus').textContent='⚠ '+esc(r.error);return;}
+  chat('sys','🔌 VPN starting in the background…'); if(VPNPOLL)clearInterval(VPNPOLL); VPNPOLL=setInterval(vpnStatus,2000); vpnStatus();});
+$('#vpnDisconnect')&&($('#vpnDisconnect').onclick=async()=>{await api('/api/vpn/disconnect',{method:'POST'});vpnStatus();});
+
 $('#menubtn').onclick=()=>openSettings();
 $('#menuScope').onclick=()=>openSettings('scope');
 $('#setclose').onclick=()=>$('#settings').classList.add('hidden');

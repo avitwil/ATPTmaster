@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import shlex
 import subprocess
+from pathlib import Path
 
 from atpt.module import Module, ModuleResult
 
@@ -67,9 +68,15 @@ def _normalize(stdout: str) -> list[dict]:
 class ReconNebula(Module):
     def _command(self, ctx) -> str:
         runner = ctx.project_dir / "recon" / "recon_runner.sh"
-        scope_file = ctx.engagement.get("scope_file") or str(ctx.project_dir / "recon" / "scope.json")
+        # UI/demo engagements don't write a scope file, but recon_runner.sh requires
+        # one (else it dies with exit 2). Persist the derived scope to a real path.
+        var = Path(ctx.project_dir) / "var"
+        var.mkdir(parents=True, exist_ok=True)
+        scope_file = var / f"{ctx.engagement['id']}.scope.json"
+        scope_file.write_text(json.dumps(ctx.scope or {}))
         cfg = json.loads(ctx.engagement.get("config") or "{}")
-        tools = cfg.get("recon_tools", "subfinder,naabu,httpx")
+        # nmap is in the default chain so a bare Kali box (no go-tools) still port-scans.
+        tools = cfg.get("recon_tools", "subfinder,naabu,nmap,httpx,ffuf")
         rate = cfg.get("rate", 150)
         targets = (ctx.scope.get("in_scope_domains", []) or []) + (ctx.scope.get("in_scope_cidrs", []) or [])
         tflags = " ".join(f"--target {shlex.quote(t)}" for t in targets)

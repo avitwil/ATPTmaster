@@ -114,15 +114,31 @@ if has naabu && bin naabu; then
   fi
 fi
 
-# ---------- nmap : service/version detection on open ports ----------------
-if has nmap && bin nmap && [[ -s "$PORTS" ]]; then
-  awk -F: '{h[$1]=h[$1]","$2} END{for(k in h){p=h[k];sub(/^,/,"",p);print k" "p}}' "$PORTS" \
-  | while read -r host ports; do
+# ---------- nmap : service/version detection -------------------------------
+if has nmap && bin nmap; then
+  if [[ -s "$PORTS" ]]; then
+    # ports already discovered (e.g. by naabu) -> version-scan exactly those
+    awk -F: '{h[$1]=h[$1]","$2} END{for(k in h){p=h[k];sub(/^,/,"",p);print k" "p}}' "$PORTS" \
+    | while read -r host ports; do
+        in_scope "$host" || { log "SKIP nmap out-of-scope: $host"; continue; }
+        nmap -sV -Pn -p "$ports" -oX - "$host" 2>>"$WORK/err.log" \
+          | python3 "$SELF_DIR/nmap2json.py" 2>>"$WORK/err.log" \
+          | while IFS= read -r ln; do printf '%s\n' "$ln" | emit nmap; done
+      done
+  else
+    # no prior port discovery (e.g. naabu absent) -> nmap the scoped hosts directly,
+    # and feed the open ports forward so httpx/ffuf can probe them.
+    while IFS= read -r host; do
+      [[ -n "$host" ]] || continue
       in_scope "$host" || { log "SKIP nmap out-of-scope: $host"; continue; }
-      nmap -sV -Pn -p "$ports" -oX - "$host" 2>>"$WORK/err.log" \
+      nmap -sV -Pn --top-ports "${NMAP_TOP_PORTS:-1000}" -oX - "$host" 2>>"$WORK/err.log" \
         | python3 "$SELF_DIR/nmap2json.py" 2>>"$WORK/err.log" \
-        | while IFS= read -r ln; do printf '%s\n' "$ln" | emit nmap; done
-    done
+        | while IFS= read -r ln; do
+            printf '%s\n' "$ln" | emit nmap
+            printf '%s' "$ln" | jq -r '"\(.host // .ip):\(.port)"' >> "$PORTS"
+          done
+    done < "$HOSTS"
+  fi
 fi
 
 # ---------- httpx : live web probe (status/title/tech/tls) ----------------

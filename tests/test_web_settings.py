@@ -140,6 +140,55 @@ class WebSettingsTest(unittest.TestCase):
         st, _, _, _ = self._post("/api/mode", {"mode": "yolo"}, eng="htb1")
         self.assertEqual(st, 400)
 
+    # --- uploads ------------------------------------------------------------
+    def test_upload_saves_file_and_returns_path(self):
+        import base64
+        self._mk_eng()
+        content = base64.b64encode(b"client\ndev tun\n").decode()
+        st, _, body, _ = self._post("/api/upload", {"name": "box.ovpn", "content_b64": content}, eng="htb1")
+        self.assertEqual(st, 200)
+        p = Path(json.loads(body)["path"])
+        self.assertTrue(p.exists())
+        self.assertEqual(p.read_bytes(), b"client\ndev tun\n")
+
+    def test_upload_sanitizes_name(self):
+        import base64
+        self._mk_eng()
+        st, _, body, _ = self._post("/api/upload",
+                                    {"name": "../../etc/evil.ovpn", "content_b64": base64.b64encode(b"x").decode()},
+                                    eng="htb1")
+        self.assertEqual(st, 200)
+        self.assertTrue(Path(json.loads(body)["path"]).name.startswith("evil"))   # basename + sanitized
+
+    # --- settings export / import -------------------------------------------
+    def test_export_then_import_roundtrip(self):
+        self._post("/api/settings", {"pentester_name": "Avi", "user_info": {"name": "Avi"}})
+        st, ct, body, headers = self._get("/api/settings/export")
+        self.assertEqual(st, 200)
+        self.assertIn("attachment", headers.get("Content-Disposition", ""))
+        blob = json.loads(body)
+        self.assertEqual(blob["pentester_name"], "Avi")
+        # import a modified copy
+        blob["pentester_name"] = "Neo"
+        st2, _, _, _ = self._post("/api/settings/import", {"settings": blob})
+        self.assertEqual(st2, 200)
+        self.assertEqual(json.loads(self._get("/api/settings")[2])["pentester_name"], "Neo")
+
+    def test_import_rejects_non_object(self):
+        st, _, _, _ = self._post("/api/settings/import", {"settings": "nope"})
+        self.assertEqual(st, 400)
+
+    # --- vpn ----------------------------------------------------------------
+    def test_vpn_status_default_down(self):
+        _, _, body, _ = self._get("/api/vpn/status")
+        self.assertIn(json.loads(body)["status"], ("down", "connecting", "connected", "error"))
+
+    def test_vpn_connect_without_config_400(self):
+        self._post("/api/demo", {})
+        st, _, body, _ = self._post("/api/vpn/connect", {}, eng="demo")
+        self.assertEqual(st, 400)
+        self.assertIn("VPN config", json.loads(body)["error"])
+
     # --- background run control ---------------------------------------------
     def test_run_status_idle_then_start(self):
         self._post("/api/demo", {})
