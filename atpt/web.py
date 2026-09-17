@@ -282,12 +282,19 @@ class WebApp:
         return self._json(200, _redact_settings(store.get_settings()))
 
     def _provider_install(self, data):
+        """Autonomous install: deps (Node/npm) + the CLI, all under sudo. The only
+        input required from the operator is the sudo password (memory-only)."""
         name = (data.get("name") or "").strip()
         if not providers.get(name):
             return self._json(400, {"error": f"unknown provider '{name}' — install it yourself"})
-        rc, out, err = providers.install(name)
-        return self._json(200, {"rc": rc, "stdout": out[-4000:], "stderr": err[-2000:],
-                                "ok": rc == 0, "status": providers.status(name)})
+        pw = data.get("sudo_password")
+        if pw:
+            privilege.set_password(pw)                 # remember in memory this session
+        res = providers.run_install(name)              # uses the in-memory sudo password
+        if res.get("needs_sudo"):
+            return self._json(200, {"needs_sudo": True,
+                                    "message": "sudo password required to install"})
+        return self._json(200, res)
 
     def _provider_login(self, data):
         name = (data.get("name") or "").strip()
@@ -573,9 +580,9 @@ pre.out{background:var(--field);border:1px solid var(--edge);border-radius:6px;p
         <button class="ghost" id="addHttp">+ Add API provider</button>
       </div>
       <div class="panel hidden" data-panel="subs">
-        <div class="hint">CLIs you're already logged into (subscription). If a known one isn't installed, install it here (asks first) and log in.</div>
+        <div class="hint">Subscription CLIs you're logged into. Claude, Gemini &amp; Codex are ready by default — press <b>Install (auto)</b> and it installs dependencies + the CLI for you (asks only for your sudo password). Or add your own with <b>+ Custom CLI</b>.</div>
         <div id="subList"></div>
-        <button class="ghost" id="addSub">+ Add CLI provider</button>
+        <button class="ghost" id="addSub">+ Custom CLI provider</button>
       </div>
       <div class="panel hidden" data-panel="ollama">
         <div class="hint">Local models via <b>Ollama</b>. Nothing leaves your machine.</div>
@@ -728,12 +735,15 @@ try{applyTheme(localStorage.getItem('atpt_theme')==='light');}catch(e){}
 function decompose(){
   HTTP=[];SUB=[];OLLAMA=[];
   const r=SET.reasoning||{}, provs=r.providers||{};
+  const KNOWN=Object.keys(PSTATUS);
   for(const [name,p] of Object.entries(provs)){
     const b=p.backend;
     if(b==='http_api')HTTP.push({name,api:p.api||'openai',model:p.model||'',endpoint:p.endpoint||'',mode:p.key_env?'env':'paste',key:p.key_env||'',has_key:!!p.has_key});
-    else if(b==='cli')SUB.push({name,cmd:p.cmd||name});
+    else if(b==='cli')SUB.push({name,cmd:p.cmd||name,custom:!KNOWN.includes(name)});
     else if(b==='ollama')OLLAMA.push({name,model:p.model||'llama3.1',endpoint:p.endpoint||''});
   }
+  // Always surface all known CLIs as default rows (claude, gemini, codex).
+  KNOWN.forEach(n=>{ if(!SUB.some(x=>!x.custom&&x.name===n)) SUB.push({name:n,cmd:(PSTATUS[n]||{}).cmd||'',custom:false}); });
   PREF=(r.preference||[]).slice();
   const pol=r.policy||{};
   $('#pol_map').value=pol.map||'any';$('#pol_exploit').value=pol.exploit||'any';$('#pol_report').value=pol.report||'any';
@@ -749,14 +759,24 @@ function httpRow(p,i){return `<div class="prow" data-i="${i}" data-kind="http" s
   <label class="full">Endpoint (optional)<input class="f_ep" value="${esc(p.endpoint)}" placeholder="https://api.openai.com/v1/chat/completions"></label>
   <label class="full">${p.mode==='env'?'Env var name':'API key'} <input class="f_key" type="${p.mode==='env'?'text':'password'}" autocomplete="off" value="${p.mode==='env'?esc(p.key):''}" placeholder="${p.mode==='env'?'ANTHROPIC_API_KEY':(p.has_key?'•••••• stored — blank keeps it':'paste secret')}"></label>
   <button class="ghost f_del full">Remove</button></div>`;}
-function subRow(p,i){const s=PSTATUS[p.name];const known=s&&s.known;const inst=s&&s.installed;
-  return `<div class="prow" data-i="${i}" data-kind="sub" style="grid-template-columns:1fr 1fr">
-  <label>Name<input class="f_name" value="${esc(p.name)}" placeholder="claude / gemini / codex"></label>
-  <label>Command<input class="f_cmd" value="${esc(p.cmd)}" placeholder="claude -p"></label>
-  <div class="full row">${s?`<span class="badge ${inst?'ok':''}">${inst?'installed':'not installed'}</span>`:''}
-    ${(known&&!inst)?`<button class="ghost f_install">Install…</button>`:''}
-    ${(known&&inst)?`<button class="ghost f_login">Log in</button>`:''}
+function subRow(p,i){
+  const s=p.custom?null:PSTATUS[p.name]; const inst=s&&s.installed;
+  const head=p.custom
+    ? `<label>Name<input class="f_name" value="${esc(p.name)}" placeholder="my-cli"></label>
+       <label class="full">Command (full path)<input class="f_cmd" value="${esc(p.cmd)}" placeholder="/usr/bin/mycli -p"></label>`
+    : `<label>Provider<input value="${esc(s?s.label:p.name)}" readonly></label>
+       <label class="full">Reasoning command (auto)<input class="f_cmd" value="${esc(p.cmd||(s&&s.cmd)||'')}" readonly></label>`;
+  return `<div class="prow" data-i="${i}" data-kind="sub" data-name="${esc(p.name)}" data-custom="${p.custom?1:0}" style="grid-template-columns:1fr 1fr">
+  ${head}
+  <div class="full row">${s?`<span class="badge ${inst?'ok':''}">${inst?'installed':'not installed'}</span>`:'<span class="hint">custom command</span>'}
+    ${(s&&!inst)?`<button class="ghost f_install">⬇ Install (auto)</button>`:''}
+    ${(s&&inst)?`<button class="ghost f_login">Log in</button>`:''}
     <span class="hint f_out"></span></div>
+  <div class="full f_sudo hidden">
+    <label class="hint">sudo password — needed to install dependencies &amp; the CLI (memory only, not saved)
+      <input type="password" class="f_sudopw" autocomplete="off" placeholder="••••••••"></label>
+    <button class="ghost f_sudogo" style="margin-top:6px">Install with sudo</button>
+  </div>
   <button class="ghost f_del full">Remove</button></div>`;}
 function ollamaRow(p,i){return `<div class="prow" data-i="${i}" data-kind="ollama" style="grid-template-columns:1fr 1fr">
   <label>Name<input class="f_name" value="${esc(p.name)}"></label>
@@ -784,22 +804,32 @@ function syncFromDom(){
     const mode=rd(row,'.f_mode');const keyv=row.querySelector('.f_key').value;
     return {name:rd(row,'.f_name'),api:rd(row,'.f_api'),model:rd(row,'.f_model'),endpoint:rd(row,'.f_ep'),
             mode,key:keyv,has_key:HTTP.find(h=>h.name===rd(row,'.f_name'))?.has_key||false};});
-  SUB=[...document.querySelectorAll('.prow[data-kind=sub]')].map(row=>({name:rd(row,'.f_name'),cmd:rd(row,'.f_cmd')}));
+  SUB=[...document.querySelectorAll('.prow[data-kind=sub]')].map(row=>{
+    if(row.dataset.custom==='1') return {name:rd(row,'.f_name'),cmd:rd(row,'.f_cmd'),custom:true};
+    return {name:row.dataset.name,cmd:rd(row,'.f_cmd')||((PSTATUS[row.dataset.name]||{}).cmd||''),custom:false};});
   OLLAMA=[...document.querySelectorAll('.prow[data-kind=ollama]')].map(row=>({name:rd(row,'.f_name'),model:rd(row,'.f_model'),endpoint:rd(row,'.f_ep')}));
 }
 function wireRows(){
   document.querySelectorAll('.f_del').forEach(b=>b.onclick=()=>{syncFromDom();const row=b.closest('.prow');const k=row.dataset.kind,i=+row.dataset.i;
     ({http:HTTP,sub:SUB,ollama:OLLAMA}[k]).splice(i,1);renderProviders();});
   document.querySelectorAll('.f_mode').forEach(s=>s.onchange=()=>{syncFromDom();renderProviders();});
-  document.querySelectorAll('.f_install').forEach(b=>b.onclick=async()=>{
-    const name=b.closest('.prow').querySelector('.f_name').value.trim();const s=PSTATUS[name];
-    if(!s||!s.install){b.closest('.prow').querySelector('.f_out').textContent='not a known CLI — install it yourself';return;}
-    if(!confirm('Run this install command?\n\n'+s.install.join(' ')))return;
-    const out=b.closest('.prow').querySelector('.f_out');out.textContent='installing…';
-    const r=await api('/api/providers/install',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
-    out.textContent=r.ok?'installed ✓':('failed: '+((r.stderr||r.error||'').slice(0,120)));await loadStatuses();renderProviders();});
+  async function doInstall(row,pw){
+    const name=row.dataset.name; const out=row.querySelector('.f_out');
+    out.textContent='installing '+name+'… (dependencies + CLI; this can take a minute)';
+    const body=pw?{name,sudo_password:pw}:{name};
+    const r=await api('/api/providers/install',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(r.needs_sudo){ row.querySelector('.f_sudo').classList.remove('hidden');
+      out.textContent='enter your sudo password to install'; return; }
+    if(r.ok){ out.textContent='installed ✓'; row.querySelector('.f_sudo').classList.add('hidden');
+      syncFromDom(); const i=+row.dataset.i; if(SUB[i]&&r.cmd)SUB[i].cmd=r.cmd;   // pin resolved bin path
+      await loadStatuses(); renderProviders();
+    } else { out.innerHTML='⚠ '+esc(r.failed||r.error||'install failed')+(r.log?'<br><span class=hint>'+esc((''+r.log).slice(-400))+'</span>':''); }
+  }
+  document.querySelectorAll('.f_install').forEach(b=>b.onclick=()=>doInstall(b.closest('.prow'),null));
+  document.querySelectorAll('.f_sudogo').forEach(b=>b.onclick=()=>{
+    const row=b.closest('.prow'); doInstall(row,row.querySelector('.f_sudopw').value); });
   document.querySelectorAll('.f_login').forEach(b=>b.onclick=async()=>{
-    const name=b.closest('.prow').querySelector('.f_name').value.trim();const out=b.closest('.prow').querySelector('.f_out');
+    const row=b.closest('.prow');const name=row.dataset.name;const out=row.querySelector('.f_out');
     out.textContent='starting login…';
     const r=await api('/api/providers/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
     if(r.mode==='terminal')out.innerHTML='run in your terminal: <code>'+esc(r.command)+'</code>'+(r.help?' — '+esc(r.help):'');
@@ -814,11 +844,11 @@ document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{if(!['operator','ctf
 
 async function openSettings(){
   SET=await api('/api/settings');
+  await loadStatuses();                 // need known-CLI list before decomposing
   decompose();
   $('#s_name').value=SET.pentester_name||'';
   $('#s_sudo').checked=!!SET.sudo_allowed;$('#sudoPwWrap').classList.toggle('hidden',!SET.sudo_allowed);
   let light=false;try{light=localStorage.getItem('atpt_theme')==='light';}catch(e){}$('#s_theme').checked=light;
-  await loadStatuses();
   renderProviders();renderLadder();
   await loadCtf();
   showTab('providers');
@@ -848,7 +878,7 @@ $('#sudoPwBtn').onclick=async()=>{
   const r=await api('/api/settings/sudo-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
   $('#s_sudopw').value='';$('#sudoPwMsg').textContent=r.has_password?'set for this session ✓':'cleared';};
 $('#addHttp').onclick=()=>{syncFromDom();HTTP.push({name:'',api:'openai',model:'',endpoint:'',mode:'paste',key:'',has_key:false});renderProviders();};
-$('#addSub').onclick=()=>{syncFromDom();SUB.push({name:'',cmd:''});renderProviders();};
+$('#addSub').onclick=()=>{syncFromDom();SUB.push({name:'',cmd:'',custom:true});renderProviders();};
 $('#addOllama').onclick=()=>{syncFromDom();OLLAMA.push({name:'',model:'llama3.1',endpoint:''});renderProviders();};
 
 async function loadCtf(){

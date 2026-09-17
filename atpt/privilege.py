@@ -60,6 +60,12 @@ def has_password() -> bool:
     return _PASSWORD is not None
 
 
+def current_password() -> str | None:
+    """Server-side only accessor for the in-memory sudo password (e.g. to feed
+    an install running under sudo -S). Never send this over HTTP."""
+    return _PASSWORD
+
+
 def sudo_invocation() -> tuple[list | None, str | None]:
     """Return (argv_prefix, stdin) for a sudo-elevated command.
 

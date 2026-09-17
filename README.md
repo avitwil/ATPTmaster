@@ -109,9 +109,12 @@ A **Settings** dropdown (header) configures, without editing JSON:
 - **Providers (API key)** — hosted providers; per provider, *paste* a key (stored
   on this machine) **or** name an *env var* (read at call time, nothing stored).
   Stored keys are **redacted** everywhere they're read back.
-- **Subscription CLI** — CLIs you're logged into (`claude`, `gemini`, `codex`). If a
-  known one isn't installed, install it from here (**asks first, shows the exact
-  command**) and log in.
+- **Subscription CLI** — CLIs you're logged into. **Claude, Gemini and Codex are
+  offered by default** (or add a **custom** one with its own name + full command).
+  One **Install (auto)** click installs any missing dependency (Node.js + npm) and
+  the CLI itself under `sudo` — the only thing you're asked for is your **sudo
+  password** (memory-only). The reasoning command is the resolved binary path
+  (e.g. `/usr/bin/claude -p`), so runs don't depend on `PATH`.
 - **Local LLM** — Ollama models. **Model ladder** — order the fallback preference and
   set a per-phase policy (`any` / `hosted_ok` / `local_only`).
 - **Operator** — pentester name (appears on the report), light/dark theme, and
