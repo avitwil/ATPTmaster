@@ -84,11 +84,14 @@ Optional tools by module (each module no-ops cleanly if its tool is missing):
 ## Quick start
 
 ```bash
-# 1. launch the console (stdlib http.server, binds to 127.0.0.1)
-python3 -m atpt serve            # → http://127.0.0.1:8787
+# 1. launch the console (the installer put an `atpt` launcher on your PATH)
+atpt --u                         # → http://127.0.0.1:8787   (alias for: atpt serve)
 
 # 2. in the browser: click "Load demo" (no tools needed) → Run full → Download report
 ```
+
+`atpt --help` lists all commands (`init` / `run` / `status` / `approve` / `serve` / …).
+`atpt --u` is the shortcut for `atpt serve` (add `--port` / `--host` to either).
 
 Or drive it from the CLI:
 
@@ -107,9 +110,37 @@ python3 -m unittest discover -s tests
 
 ## Web console
 
-`atpt serve` opens a single-page console: the **logo** sits top-right, a **☰ menu**
-(top-left) holds all settings, **Run** is top-right, and the body is **chat + status
-on the left**, **findings + attack-direction tree on the right**.
+Launch it with `atpt --u` (→ http://127.0.0.1:8787). The **logo** sits top-right, a
+**☰ menu** (top-left) holds all settings, **Run** is top-right, and the body is
+**chat + status on the left**, **findings + attack-direction tree on the right**.
+
+![ATPTmaster console](docs/screenshots/console.png)
+
+### Using the console — a TryHackMe box, end to end
+
+1. **☰ → Scope → Target & scope.** Give it an id and name, put the box IP in
+   **Target (IP or CIDR)**, and tick the domains in play (Infra for the IP, Web if
+   there's a site). Each domain takes in-scope and out-of-scope lists — the scope
+   oracle enforces both before any intrusive tool touches a host.
+
+   ![Scope](docs/screenshots/settings-scope.png)
+
+2. **☰ → Scope → CTF / engagement.** Set the **goals** (injected into the LLM's
+   prompts), **pick your `.ovpn`** (a file picker — no path typing), then
+   **Connect VPN (background)** to bring the tunnel up. Optionally add an attack-box.
+
+   ![CTF & VPN](docs/screenshots/settings-ctf.png)
+
+3. **☰ → AI settings.** Add a provider (API key, subscription CLI, or Ollama), then
+   **☰ → App settings → Model ladder** to order the models to try, each with an
+   **effort** level (fetched live in the **Models** panel).
+
+   ![Model ladder](docs/screenshots/settings-ladder.png)
+
+4. **☰ → App settings → Mode**, then press **Run** (top-right). It runs in the
+   background — the button becomes **⏸ Pause** / **⏹ Stop** (halt at the next step).
+   Findings and the attack tree fill in on the right; grab the report from
+   **App settings → Report** (customize per-finding notes and screenshots first).
 
 - **Run / Pause / Stop** — Run executes in the background; while it runs the button
   becomes **⏸ Pause** and **⏹ Stop**, which halt gracefully at the next module boundary
