@@ -46,7 +46,12 @@ def build_report_md(store, eid: str, project_dir: Path) -> str:
     eng = store.get_engagement(eid) or {"id": eid, "name": eid, "scope": "{}"}
     scope = json.loads(eng.get("scope") or "{}")
     all_findings = store.list_findings(eid)
-    reported = [f for f in all_findings if f.get("status") != "false_positive"]
+    # Per-finding report customization (include / operator note / screenshots).
+    cfg = json.loads(eng.get("config") or "{}")
+    rep = (cfg.get("report") or {}).get("findings") or {}
+    reported = [f for f in all_findings
+                if f.get("status") != "false_positive"
+                and rep.get(str(f.get("id")), {}).get("include", True)]
     reported.sort(key=lambda f: (_SEV_ORDER.get((f.get("severity") or "info").lower(), 9),
                                  -(f.get("cvss") or 0)))
     assets = store.list_assets(eid)
@@ -109,6 +114,13 @@ def build_report_md(store, eid: str, project_dir: Path) -> str:
         L.append(f"- **Evidence:** `{json.dumps(ev, ensure_ascii=False)}`")
         rem = _REMEDIATION.get(str(owasp).split()[0] if owasp else "", _DEFAULT_REMEDIATION)
         L.append(f"- **Remediation:** {rem}")
+        rc = rep.get(str(f.get("id")), {})
+        if rc.get("note"):
+            L.append(f"- **Operator note:** {rc['note']}")
+        for shot in rc.get("screenshots", []) or []:
+            if shot:
+                L.append("")
+                L.append(f"![screenshot]({shot})")
         L.append("")
 
     L.append("## Appendix A — Discovered Assets (raw evidence)")

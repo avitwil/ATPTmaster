@@ -273,6 +273,16 @@ class WebApp:
             eng = store.get_engagement(eid)
             return self._json(200, {"scope": json.loads(eng.get("scope") or "{}"),
                                     "name": eng.get("name"), "mode": eng.get("mode")})
+        if path == "/api/report-settings":
+            if method == "GET":
+                cfg = json.loads(store.get_engagement(eid).get("config") or "{}")
+                return self._json(200, (cfg.get("report") or {}))
+            if method == "POST":
+                findings = data.get("findings")
+                if not isinstance(findings, dict):
+                    return self._json(400, {"error": "findings must be an object"})
+                store.update_engagement_config(eid, {"report": {"findings": findings}})
+                return self._json(200, {"ok": True})
         if path == "/api/mode" and method == "POST":
             mode = data.get("mode")
             if mode not in ("step", "semi", "full"):
@@ -731,8 +741,13 @@ pre.out{background:var(--field);border:1px solid var(--edge);border-radius:6px;p
           </div>
         </div>
         <div class="panel hidden" data-panel="report">
-          <div class="hint">Download the PTES report. <span class="muted">(Customization — pick findings, add screenshots and your own mitigation/impact notes — is coming next.)</span></div>
-          <button id="rp_dl">⬇ Download PTES report</button>
+          <div class="hint">Customize the PTES report: untick findings to exclude, add your own note (mitigation/impact) and screenshot file paths per finding.</div>
+          <div id="rp_findings"><span class="hint">Select an engagement to customize its report.</span></div>
+          <div class="row" style="margin-top:10px">
+            <button id="rp_save">Save report settings</button>
+            <button class="ghost" id="rp_dl">⬇ Download PTES report</button>
+            <span class="hint" id="rp_msg"></span>
+          </div>
         </div>
       </div>
     </div>
@@ -1044,7 +1059,29 @@ function renderModelList(models){
 
 function showTab(t){document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('on',x.dataset.tab===t));
   document.querySelectorAll('.panel').forEach(x=>x.classList.toggle('hidden',x.dataset.panel!==t));
-  if(t==='ladder')renderLadder(); if(t==='models')renderModels(); if(t==='scope')loadScope();}
+  if(t==='ladder')renderLadder(); if(t==='models')renderModels(); if(t==='scope')loadScope(); if(t==='report')loadReport();}
+async function loadReport(){
+  const box=$('#rp_findings');
+  if(!ENG){box.innerHTML='<span class=hint>Select an engagement first.</span>';return;}
+  const [f,rs]=await Promise.all([api('/api/findings?eng='+encodeURIComponent(ENG)),api('/api/report-settings?eng='+encodeURIComponent(ENG))]);
+  const findings=(f.findings||[]).filter(x=>x.status!=='false_positive'); const cfg=rs.findings||{};
+  if(!findings.length){box.innerHTML='<span class=hint>No findings yet — run the pipeline.</span>';return;}
+  box.innerHTML=findings.map(x=>{const c=cfg[x.id]||{}; const inc=c.include!==false;
+    return `<div class="prow" data-fid="${x.id}" style="grid-template-columns:1fr">
+      <div class="toggle"><input type="checkbox" class="r_inc" ${inc?'checked':''}> <label style="color:var(--fg)"><span class="pill sev-${sevCls(x.severity)}">${esc(x.severity||'info')}</span> <b>${esc(x.title)}</b></label></div>
+      <label class="hint">Operator note (mitigation / impact)<textarea class="r_note" rows="2">${esc(c.note||'')}</textarea></label>
+      <label class="hint">Screenshot file paths (comma / newline)<textarea class="r_shots" rows="1" placeholder="/home/kali/shots/finding.png">${esc((c.screenshots||[]).join(', '))}</textarea></label>
+    </div>`;}).join('');
+}
+async function saveReport(){
+  if(!ENG){$('#rp_msg').textContent='select an engagement';return;} const findings={};
+  $('#rp_findings').querySelectorAll('.prow').forEach(row=>{ findings[row.dataset.fid]={
+    include:row.querySelector('.r_inc').checked, note:row.querySelector('.r_note').value.trim(),
+    screenshots:split(row.querySelector('.r_shots').value)};});
+  await api('/api/report-settings?eng='+encodeURIComponent(ENG),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({findings})});
+  $('#rp_msg').textContent='Saved ✓';setTimeout(()=>$('#rp_msg').textContent='',1500);
+}
+$('#rp_save')&&($('#rp_save').onclick=saveReport);
 document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>{if(['providers','subs','ollama','ladder','models'].includes(b.dataset.tab))syncFromDom();showTab(b.dataset.tab);});
 $('#lm_prov')&&($('#lm_prov').onchange=fillModelOptions);
 $('#lm_add')&&($('#lm_add').onclick=()=>{
