@@ -56,13 +56,17 @@ class Orchestrator:
 
     def _ctx(self, eng: dict, dry_run: bool) -> RunContext:
         cfg = json.loads(eng.get("config") or "{}")
+        # Reasoning: engagement config wins; otherwise fall back to global settings.
+        settings = self.store.get_settings() if hasattr(self.store, "get_settings") else {}
+        reasoning_cfg = cfg.get("reasoning") or settings.get("reasoning")
         reasoner = ReasoningLadder(
-            cfg.get("reasoning"),
+            reasoning_cfg,
             emit=lambda kind, msg, lvl: self.store.add_event(
                 eng["id"], None, None, lvl, kind, msg, None))
+        goals = (cfg.get("ctf") or {}).get("goals") or ""
         return RunContext(engagement=eng, scope=json.loads(eng.get("scope") or "{}"),
                           store=self.store, project_dir=self.project_dir,
-                          dry_run=dry_run, reasoner=reasoner)
+                          dry_run=dry_run, reasoner=reasoner, goals=goals)
 
     def plan(self, eng: dict, mode: str) -> list[dict]:
         rows = []

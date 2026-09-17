@@ -62,6 +62,11 @@ def build_report_md(store, eid: str, project_dir: Path) -> str:
     cidrs = ", ".join(scope.get("in_scope_cidrs", []) or []) or "—"
     L.append(f"- **In-scope domains:** {domains}")
     L.append(f"- **In-scope networks:** {cidrs}")
+    pentester = ""
+    if hasattr(store, "get_settings"):
+        pentester = (store.get_settings() or {}).get("pentester_name") or ""
+    if pentester:
+        L.append(f"- **Prepared by:** {pentester}")
     L.append(f"- **Standard:** PTES · CVSS · OWASP Top 10")
     L.append("")
 

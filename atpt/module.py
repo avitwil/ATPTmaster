@@ -59,6 +59,7 @@ class RunContext:
     project_dir: Path
     dry_run: bool = False
     reasoner: Any = None
+    goals: str = ""            # operator-stated CTF objective, injected into prompts
 
     def emit(self, kind: str, message: str, level: str = "info",
              phase: str | None = None, module: str | None = None,
@@ -68,6 +69,8 @@ class RunContext:
     def reason(self, prompt: str, phase: str) -> "str | None":
         if self.reasoner is None:
             return None
+        if self.goals:
+            prompt = f"Engagement goals: {self.goals}\n\n{prompt}"
         res = self.reasoner.reason(prompt, phase)
         return res.text if res else None
 

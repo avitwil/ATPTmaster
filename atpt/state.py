@@ -52,7 +52,21 @@ CREATE TABLE IF NOT EXISTS module_runs (
   status TEXT, summary TEXT, error TEXT,
   finished_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS app_settings (
+  id INTEGER PRIMARY KEY CHECK (id = 1),   -- single global row
+  data TEXT DEFAULT '{}'                   -- JSON: pentester_name, sudo_allowed, reasoning, ...
+);
 """
+
+
+def _deep_merge(base: dict, patch: dict) -> dict:
+    """Recursively merge patch into base (nested dicts merged, other values replaced)."""
+    for k, v in patch.items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            _deep_merge(base[k], v)
+        else:
+            base[k] = v
+    return base
 
 _ASSET_COLS = ["asset_type", "value", "host", "ip", "port", "protocol", "service",
                "product", "version", "http_status", "http_title", "tech", "url",
@@ -85,6 +99,30 @@ class SQLiteStore:
 
     def set_mode(self, eid, mode):
         self.cx.execute("UPDATE engagements SET mode=? WHERE id=?", (mode, eid))
+        self.cx.commit()
+
+    def update_engagement_config(self, eid, patch: dict):
+        """Deep-merge `patch` into the engagement's config JSON."""
+        r = self.cx.execute("SELECT config FROM engagements WHERE id=?", (eid,)).fetchone()
+        cfg = json.loads(r[0]) if r and r[0] else {}
+        _deep_merge(cfg, patch)
+        self.cx.execute("UPDATE engagements SET config=? WHERE id=?", (json.dumps(cfg), eid))
+        self.cx.commit()
+
+    # --- global settings -----------------------------------------------------
+    def get_settings(self) -> dict:
+        r = self.cx.execute("SELECT data FROM app_settings WHERE id=1").fetchone()
+        return json.loads(r[0]) if r and r[0] else {}
+
+    def set_settings(self, patch: dict):
+        """Shallow top-level merge into the single global settings row: provided
+        keys replace wholesale (so a full `reasoning` block can drop a provider),
+        omitted keys are preserved."""
+        cur = self.get_settings()
+        cur.update(patch)
+        self.cx.execute(
+            "INSERT INTO app_settings (id,data) VALUES (1,?) "
+            "ON CONFLICT(id) DO UPDATE SET data=excluded.data", (json.dumps(cur),))
         self.cx.commit()
 
     def list_engagements(self) -> list[dict]:

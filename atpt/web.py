@@ -7,6 +7,7 @@ HTTP server; each request opens its own SQLite connection (thread-safe by constr
 Binds to 127.0.0.1 by default — this is an operator console, not a public endpoint.
 """
 from __future__ import annotations
+import copy
 import importlib.util
 import json
 import re
@@ -14,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
+from . import privilege, providers
 from .engine import Orchestrator
 from .registry import discover
 from .state import SQLiteStore
@@ -40,6 +42,37 @@ def _load_report_builder(project_dir: Path):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod.build_report_md
+
+
+def _redact_settings(s: dict) -> dict:
+    """Return a copy safe to send to the client: stored API keys become a
+    boolean `has_key` presence flag — the value never leaves the server."""
+    s = copy.deepcopy(s or {})
+    for p in (s.get("reasoning", {}) or {}).get("providers", {}).values():
+        if isinstance(p, dict) and p.get("api_key"):
+            p.pop("api_key", None)
+            p["has_key"] = True
+    return s
+
+
+def _preserve_reasoning_keys(incoming: dict, existing: dict) -> dict:
+    """When a provider is posted without an api_key (blank/omitted), keep the
+    previously stored key rather than wiping it. Also strips any `has_key` marker
+    a client echoed back so it never lands in storage."""
+    inc = (incoming.get("reasoning") or {}).get("providers")
+    if not isinstance(inc, dict):
+        return incoming
+    ex = (existing.get("reasoning") or {}).get("providers", {})
+    for name, p in inc.items():
+        if not isinstance(p, dict):
+            continue
+        p.pop("has_key", None)
+        if not p.get("api_key"):
+            p.pop("api_key", None)
+            old = ex.get(name) if isinstance(ex, dict) else None
+            if isinstance(old, dict) and old.get("api_key"):
+                p["api_key"] = old["api_key"]
+    return incoming
 
 
 def _parse_evidence(f: dict) -> dict:
@@ -130,6 +163,25 @@ class WebApp:
         if path == "/api/demo" and method == "POST":
             return self._create_demo()
 
+        # --- global settings & providers (no engagement required) -----------
+        if path == "/api/settings":
+            if method == "GET":
+                return self._json(200, _redact_settings(self._store().get_settings()))
+            if method == "POST":
+                return self._save_settings(data)
+        if path == "/api/settings/sudo-password":
+            if method != "POST":
+                return self._json(405, {"error": "POST only; this value is never read back"})
+            privilege.set_password(data.get("password") or "")
+            return self._json(200, {"ok": True, "has_password": privilege.has_password()})
+        if path == "/api/providers/status" and method == "GET":
+            return self._json(200, {"providers": [
+                {"name": n, **providers.status(n)} for n in providers.known()]})
+        if path == "/api/providers/install" and method == "POST":
+            return self._provider_install(data)
+        if path == "/api/providers/login" and method == "POST":
+            return self._provider_login(data)
+
         eid = query.get("eng") or data.get("eng")
         if path.startswith("/api/") and not eid:
             return self._json(400, {"error": "missing 'eng' (engagement id)"})
@@ -159,6 +211,11 @@ class WebApp:
             md = self._report_builder()(store, eid, self.project_dir)
             return (200, "text/markdown; charset=utf-8", md.encode(),
                     {"Content-Disposition": f'attachment; filename="{eid}-ptes-report.md"'})
+        if path == "/api/settings/ctf":
+            if method == "GET":
+                return self._json(200, self._get_ctf(store, eid))
+            if method == "POST":
+                return self._save_ctf(store, eid, data)
 
         return self._json(404, {"error": "no such route"})
 
@@ -197,6 +254,79 @@ class WebApp:
         store.add_event(eid, "recon", None, "info", "demo_seed",
                         "demo engagement seeded with 4 sample assets", None)
         return self._json(200, {"engagement": store.get_engagement(eid)})
+
+    # ---- settings / providers / ctf ----------------------------------------
+    def _save_settings(self, data):
+        store = self._store()
+        existing = store.get_settings()
+        patch = _preserve_reasoning_keys(dict(data), existing)
+        patch.pop("eng", None)
+        store.set_settings(patch)
+        if "sudo_allowed" in patch:
+            privilege.set_allowed(bool(patch["sudo_allowed"]))
+        return self._json(200, _redact_settings(store.get_settings()))
+
+    def _provider_install(self, data):
+        name = (data.get("name") or "").strip()
+        if not providers.get(name):
+            return self._json(400, {"error": f"unknown provider '{name}' — install it yourself"})
+        rc, out, err = providers.install(name)
+        return self._json(200, {"rc": rc, "stdout": out[-4000:], "stderr": err[-2000:],
+                                "ok": rc == 0, "status": providers.status(name)})
+
+    def _provider_login(self, data):
+        name = (data.get("name") or "").strip()
+        entry = providers.get(name)
+        argv = providers.login_argv(name)
+        if not entry or not argv:
+            return self._json(400, {"error": f"no login command for '{name}'"})
+        command = " ".join(argv)
+        if entry.get("login_interactive"):
+            # a real TTY login can't be driven from the browser — hand it back.
+            return self._json(200, {"mode": "terminal", "command": command,
+                                    "help": entry.get("help", "")})
+        # Non-interactive login (e.g. `codex login`) — run and surface output/URL.
+        import subprocess
+        try:
+            p = subprocess.run(argv, capture_output=True, text=True, timeout=180)
+            return self._json(200, {"mode": "ran", "command": command,
+                                    "rc": p.returncode, "stdout": p.stdout[-4000:],
+                                    "stderr": p.stderr[-2000:], "help": entry.get("help", "")})
+        except Exception as exc:
+            return self._json(200, {"mode": "terminal", "command": command,
+                                    "help": entry.get("help", ""), "note": str(exc)})
+
+    def _get_ctf(self, store, eid) -> dict:
+        cfg = json.loads(store.get_engagement(eid).get("config") or "{}")
+        ctf = dict(cfg.get("ctf") or {})
+        ctf["attackbox_has_password"] = privilege.has_attackbox_password(eid)
+        return ctf
+
+    def _save_ctf(self, store, eid, data):
+        patch = {}
+        if "goals" in data:
+            patch["goals"] = str(data.get("goals") or "")
+        if "vpn_config_path" in data:
+            vp = str(data.get("vpn_config_path") or "").strip()
+            patch["vpn_config_path"] = vp
+            if vp and not (vp.endswith(".ovpn") or vp.endswith(".conf")):
+                store.add_event(eid, None, None, "warn", "ctf_vpn",
+                                f"VPN path '{vp}' is not a .ovpn/.conf file", None)
+        if "attackbox" in data:
+            ab = data.get("attackbox") or {}
+            host = str(ab.get("host") or "").strip()
+            user = str(ab.get("user") or "").strip()
+            pw = ab.get("password") or ""
+            # Only require host+user when the operator is actually setting a box.
+            if (host or user or pw or ab.get("key_path")) and not (host and user):
+                return self._json(400, {"error": "attack-box requires both host and user"})
+            box = {"host": host, "user": user}
+            if ab.get("key_path"):
+                box["key_path"] = str(ab["key_path"]).strip()
+            patch["attackbox"] = box                       # NOTE: password excluded from storage
+            privilege.set_attackbox_password(eid, pw)       # kept in memory only
+        store.update_engagement_config(eid, {"ctf": patch})
+        return self._json(200, self._get_ctf(store, eid))
 
     def _chat(self, store, eid, message):
         msg = (message or "").strip()

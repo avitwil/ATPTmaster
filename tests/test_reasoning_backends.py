@@ -83,6 +83,20 @@ class BackendsTest(unittest.TestCase):
         self.assertEqual(body["messages"], [{"role": "user", "content": "hello"}])
         self.assertNotIn("prompt", body)
 
+    def test_http_api_inline_key_overrides_env(self):
+        # a pasted key stored in config is used directly, no env var needed
+        cfg = {"api": "openai", "model": "m", "api_key": "pasted-key"}
+        captured = []
+        orig = reasoning.urllib.request.urlopen
+        reasoning.urllib.request.urlopen = _fake_urlopen(
+            captured, b'{"choices": [{"message": {"content": "OK"}}]}')
+        try:
+            out = _backend_http_api(cfg, "hi")
+        finally:
+            reasoning.urllib.request.urlopen = orig
+        self.assertEqual(out, "OK")
+        self.assertEqual(captured[0].headers.get("Authorization"), "Bearer pasted-key")
+
     def test_http_api_defaults_to_openai_and_honors_endpoint(self):
         cfg = {"model": "m", "key_env": "ATPT_TEST_KEY",
                "endpoint": "https://gw.local/v1/chat/completions"}

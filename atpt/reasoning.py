@@ -58,9 +58,11 @@ def _backend_http_api(cfg: dict, prompt: str) -> str:
       - "openai" (default): POST /v1/chat/completions, Bearer, messages[]
     An explicit `endpoint` overrides the default URL (e.g. an OpenAI-compatible gateway).
     """
+    # A pasted key (stored in settings) takes precedence; otherwise read from the
+    # named environment variable at call time. Keys are never placed in a URL.
     key_env = cfg.get("key_env")
-    key = os.environ.get(key_env) if key_env else None
-    if key_env and not key:
+    key = cfg.get("api_key") or (os.environ.get(key_env) if key_env else None)
+    if key_env and not cfg.get("api_key") and not key:
         raise RuntimeError(f"missing API key env var '{key_env}'")
     api = (cfg.get("api") or "openai").lower()
     headers = {"Content-Type": "application/json"}
