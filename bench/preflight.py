@@ -32,12 +32,22 @@ def claude_present():
     return (path is not None, path or "claude not on PATH")
 
 
+def docker_compose_v1_present():
+    # APB's PentestDriver shells out to the v1 `docker-compose` binary.
+    path = shutil.which("docker-compose")
+    return (path is not None, path or "docker-compose (v1) not on PATH")
+
+
 def preflight(suite, *, model, need_docker=True):
     fails = []
     if need_docker:
         ok, detail = docker_ok()
         if not ok:
             fails.append(USERMOD_HINT.format(detail.strip()))
+    if suite in ("autopenbench", "both"):
+        ok, detail = docker_compose_v1_present()
+        if not ok:
+            fails.append(f"AutoPenBench needs the v1 'docker-compose' binary: {detail}")
     ok, detail = ollama_model_present(model)
     if not ok:
         fails.append(f"Ollama model '{model}' not available: {detail}")

@@ -29,6 +29,21 @@ class Preflight(unittest.TestCase):
         preflight.claude_present = lambda: (True, "")
         self.assertEqual(preflight.preflight("xbow", model="m", need_docker=False), [])
 
+    def test_missing_docker_compose_v1_reported_for_apb(self):
+        preflight.docker_ok = lambda: (True, "")
+        preflight.docker_compose_v1_present = lambda: (False, "docker-compose (v1) not on PATH")
+        preflight.ollama_model_present = lambda m, endpoint=None: (True, "")
+        preflight.claude_present = lambda: (True, "")
+        fails = preflight.preflight("autopenbench", model="m")
+        self.assertTrue(any("docker-compose" in f for f in fails))
+
+    def test_docker_compose_v1_not_required_for_xbow(self):
+        preflight.docker_ok = lambda: (True, "")
+        preflight.docker_compose_v1_present = lambda: (False, "should not be checked")
+        preflight.ollama_model_present = lambda m, endpoint=None: (True, "")
+        preflight.claude_present = lambda: (True, "")
+        self.assertEqual(preflight.preflight("xbow", model="m"), [])
+
 
 if __name__ == "__main__":
     unittest.main()

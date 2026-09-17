@@ -13,17 +13,22 @@ def _install_fake_apb():
 
     class _Tool:
         def __init__(self, **kw): self.kw = kw
-        def run(self, shell): return f"ran:{self.kw}"
+        def run(self, *a, **k): return f"ran:{self.kw}"
 
     class ExecuteBash(_Tool): pass
-    class SshConnect(_Tool):
-        def run(self, shell, remotes=None): return "ssh-ok"
-    class WriteFile(_Tool): pass
+    class SSHConnect(_Tool):
+        def run(self, *a, **k): return ("channel", "ssh-ok")
+    class WriteFile(_Tool):
+        def run(self, *a, **k): return "wrote"
     class FinalAnswer(_Tool): pass
-    tools.ExecuteBash, tools.SshConnect = ExecuteBash, SshConnect
+    tools.ExecuteBash, tools.SSHConnect = ExecuteBash, SSHConnect
     tools.WriteFile, tools.FinalAnswer = WriteFile, FinalAnswer
-    sys.modules["autopenbench"] = types.ModuleType("autopenbench")
+    autopenbench_mod = types.ModuleType("autopenbench")
+    shell_mod = types.ModuleType("autopenbench.shell")
+    shell_mod.RemoteShell = lambda ch: ("remote", ch)
+    sys.modules["autopenbench"] = autopenbench_mod
     sys.modules["autopenbench.tools"] = tools
+    sys.modules["autopenbench.shell"] = shell_mod
 
 
 class LoadTasks(unittest.TestCase):

@@ -17,8 +17,8 @@ def load_tasks(apb_root: str = DEFAULT_APB_ROOT, limit=None) -> list:
     games = json.load(open(os.path.join(apb_root, "data", "games.json")))
     tasks = []
     for category, items in games.get("in-vitro", {}).items():
-        for t in items:
-            tasks.append({**t, "category": category})
+        for idx, t in enumerate(items):
+            tasks.append({**t, "category": category, "idx": idx})
     tasks.sort(key=lambda t: (t["category"], t.get("target", "")))
     return tasks[:limit] if limit else tasks
 
@@ -47,8 +47,8 @@ class APBExecutor(Executor):
              "desc": "run a shell command on a machine you have a shell on"},
             {"name": "ssh_connect", "args": ["machine_ipaddr", "user", "password", "port"],
              "desc": "open an SSH session to a machine (start with 192.168.0.5 kali)"},
-            {"name": "write_file", "args": ["machine_ipaddr", "path", "content"],
-             "desc": "write a file on a machine"},
+            {"name": "write_file", "args": ["file_name", "content"],
+             "desc": "write a script file into the Kali /root/scripts folder"},
             {"name": "final_answer", "args": ["flag"], "desc": "submit the captured flag"},
         ]
 
@@ -61,7 +61,7 @@ class APBExecutor(Executor):
         return self.driver.remotes.get(ip) or self.driver.remotes.get("192.168.0.5")
 
     def run(self, action: Action) -> Observation:
-        from autopenbench.tools import ExecuteBash, SshConnect, WriteFile, FinalAnswer
+        from autopenbench.tools import ExecuteBash, SSHConnect, WriteFile, FinalAnswer
         a = action.args
         if action.tool == "final_answer":
             got = str(a.get("flag", "")).strip()
@@ -72,22 +72,53 @@ class APBExecutor(Executor):
                               cmd=a.get("cmd", "")).run(self._shell_for(a.get("machine_ipaddr", "192.168.0.5")))
             return Observation(text=str(out))
         if action.tool == "ssh_connect":
-            tool = SshConnect(**{k: a[k] for k in ("machine_ipaddr", "user", "password", "port") if k in a})
+            ip = a.get("machine_ipaddr", "192.168.0.5")
+            tool = SSHConnect(ssh_ipaddr=ip,
+                              ssh_port=int(a.get("port", 22)),
+                              ssh_username=a.get("user", "root"),
+                              ssh_password=a.get("password", "root"))
+            shell_or_client, msg = tool.run(self.driver.ssh_kali)
+            # On success the first return is a paramiko invoke_shell channel; wrap
+            # it as a RemoteShell and store the pivot so later execute_bash to that
+            # IP reuses this session. If wrapping fails, just report msg.
             try:
-                out = tool.run(self.driver.ssh_kali, self.driver.remotes)
-            except TypeError:
-                out = tool.run(self._shell_for(a.get("machine_ipaddr", "192.168.0.5")))
-            return Observation(text=str(out))
+                from autopenbench.shell import RemoteShell
+                self.driver.remotes[ip] = RemoteShell(shell_or_client)
+            except Exception:
+                pass
+            return Observation(text=str(msg))
         if action.tool == "write_file":
-            out = WriteFile(**{k: a[k] for k in ("machine_ipaddr", "path", "content") if k in a}).run(
-                self._shell_for(a.get("machine_ipaddr", "192.168.0.5")))
+            out = WriteFile(
+                content=a.get("content", ""),
+                file_name=a.get("file_name")
+                or __import__("os").path.basename(a.get("path", "script.sh"))).run()
             return Observation(text=str(out))
         return Observation(text=f"unknown tool {action.tool}")
+
+
+def _split_steps(transcript: str) -> list:
+    """Pair each 'ACTION:' line with the following 'OBSERVATION:' line into a
+    single step string the APB Evaluator can judge."""
+    steps, cur = [], None
+    for line in transcript.splitlines():
+        if line.startswith("ACTION:"):
+            if cur is not None:
+                steps.append(cur)
+            cur = line
+        elif line.startswith("OBSERVATION:"):
+            if cur is not None:
+                cur += "\n" + line
+                steps.append(cur)
+                cur = None
+    if cur is not None:
+        steps.append(cur)
+    return steps
 
 
 def run_suite(tasks, brain, *, driver_factory, evaluator_factory=None,
               max_steps=30, emit=None):
     from .agent import Episode
+    emit = emit or (lambda *a, **k: None)
     episodes = []
     for t in tasks:
         driver = None
@@ -107,5 +138,19 @@ def run_suite(tasks, brain, *, driver_factory, evaluator_factory=None,
                     pass
             except Exception:
                 pass
+        # Local-judge milestone scoring (best-effort; never breaks the run).
+        try:
+            from autopenbench.utils import load_milestones
+            vm_index = int(t.get("idx", 0))
+            command_ms = load_milestones("command", "in-vitro", t["category"], vm_index)
+            stage_ms = load_milestones("stage", "in-vitro", t["category"], vm_index)
+            evaluator = (evaluator_factory or make_local_evaluator)(command_ms, stage_ms)
+            for step_text in _split_steps(ep.transcript):
+                evaluator.evaluate_step(step_text)
+            emit("apb_milestones",
+                 f"{t['target']}: reached {evaluator.reached_milestones} command milestones",
+                 "info")
+        except Exception as exc:
+            emit("apb_milestones", f"{t.get('target', '?')}: milestone scoring skipped ({exc})", "warn")
         episodes.append(ep)
     return episodes

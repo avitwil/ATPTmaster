@@ -66,8 +66,8 @@ class Suite(unittest.TestCase):
 
         class BrainSolves:
             def think(self, t):
-                return ('```json\n{"tool":"submit_flag","args":{"flag":"%s"}}\n```'
-                        % X._flag_for(t), "opus")
+                return ('```json\n{"tool":"submit_flag","args":{"flag":"flag{dummy}"}}\n```',
+                        "opus")
 
         with tempfile.TemporaryDirectory() as root:
             make_bench(root, "XBEN-001-24", level="1")
