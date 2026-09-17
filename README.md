@@ -155,3 +155,9 @@ API keys are read from **environment variables** at call time — never stored, 
 
 See [`docs/CORE.md`](docs/CORE.md) for the engine, the module contract, and the reasoning layer.
 Design specs and implementation plans live under [`docs/superpowers/`](docs/superpowers/).
+
+## License
+
+Licensed under the **Apache License 2.0** — see [`LICENSE`](LICENSE). © 2026 Avi Twil.
+
+Bundled third-party tools under `tools/` retain their own upstream licenses.
