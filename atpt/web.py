@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
-from . import models, privilege, providers
+from . import models, privilege, providers, selfupdate
 from .engine import Orchestrator
 from .registry import discover
 from .state import SQLiteStore
@@ -280,6 +280,10 @@ class WebApp:
                 {"name": n, **providers.status(n)} for n in providers.known()]})
         if path == "/api/models" and method == "GET":
             return self._list_models(query)
+        if path == "/api/update/check" and method == "GET":
+            return self._json(200, selfupdate.check(self.project_dir))
+        if path == "/api/update/apply" and method == "POST":
+            return self._json(200, selfupdate.apply(self.project_dir))
         if path == "/api/providers/install" and method == "POST":
             return self._provider_install(data)
         if path == "/api/providers/login" and method == "POST":
@@ -700,6 +704,7 @@ pre.out{background:var(--field);border:1px solid var(--edge);border-radius:6px;p
         <button class="nav" data-tab="appearance">Appearance</button>
         <button class="nav" data-tab="ladder">Model ladder</button>
         <button class="nav" data-tab="report">Report</button>
+        <button class="nav" data-tab="update">Update</button>
       </nav>
       <div class="panels">
         <div class="panel" data-panel="userinfo">
@@ -804,6 +809,13 @@ pre.out{background:var(--field);border:1px solid var(--edge);border-radius:6px;p
             <button class="ghost" id="rp_dl">⬇ Download PTES report</button>
             <span class="hint" id="rp_msg"></span>
           </div>
+        </div>
+        <div class="panel hidden" data-panel="update">
+          <div class="hint">Update ATPTmaster from its GitHub repository (fast-forward pull of the current branch).</div>
+          <div class="row"><button class="ghost" id="upd_check">Check for updates</button><span class="hint" id="upd_status"></span></div>
+          <div id="upd_log" style="margin-top:8px"></div>
+          <button id="upd_apply" class="hidden" style="margin-top:8px">⬇ Update now</button>
+          <div class="hint" id="upd_result" style="margin-top:6px"></div>
         </div>
       </div>
     </div>
@@ -1135,7 +1147,7 @@ function renderModelList(models){
 
 function showTab(t){document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('on',x.dataset.tab===t));
   document.querySelectorAll('.panel').forEach(x=>x.classList.toggle('hidden',x.dataset.panel!==t));
-  if(t==='ladder')renderLadder(); if(t==='models')renderModels(); if(t==='scope')loadScope(); if(t==='report')loadReport();}
+  if(t==='ladder')renderLadder(); if(t==='models')renderModels(); if(t==='scope')loadScope(); if(t==='report')loadReport(); if(t==='update')checkUpdate();}
 async function loadReport(){
   const box=$('#rp_findings');
   if(!ENG){box.innerHTML='<span class=hint>Select an engagement first.</span>';return;}
@@ -1158,6 +1170,28 @@ async function saveReport(){
   $('#rp_msg').textContent='Saved ✓';setTimeout(()=>$('#rp_msg').textContent='',1500);
 }
 $('#rp_save')&&($('#rp_save').onclick=saveReport);
+
+/* ---- self update ---- */
+async function checkUpdate(){
+  $('#upd_status').textContent='checking…'; $('#upd_result').textContent='';
+  const r=await api('/api/update/check');
+  if(r.repo===false||r.error){ $('#upd_status').textContent='⚠ '+esc(r.error||'not a git checkout'); $('#upd_log').innerHTML=''; $('#upd_apply').classList.add('hidden'); return; }
+  if(r.behind>0){
+    $('#upd_status').innerHTML='<b>'+r.behind+'</b> update'+(r.behind>1?'s':'')+' available &nbsp;<span class=hint>'+esc(r.current)+' → '+esc(r.latest)+' ('+esc(r.branch)+')</span>';
+    $('#upd_log').innerHTML='<div class=hint>Changelog:</div><pre class=out>'+r.changelog.map(esc).join('\n')+'</pre>';
+    $('#upd_apply').classList.remove('hidden');
+  } else {
+    $('#upd_status').innerHTML='✓ up to date <span class=hint>('+esc(r.current)+', '+esc(r.branch)+')</span>'+(r.fetch_error?' <span class=warn>— fetch: '+esc(r.fetch_error)+'</span>':'');
+    $('#upd_log').innerHTML=''; $('#upd_apply').classList.add('hidden');
+  }
+}
+$('#upd_check')&&($('#upd_check').onclick=checkUpdate);
+$('#upd_apply')&&($('#upd_apply').onclick=async()=>{
+  $('#upd_result').textContent='updating…';
+  const r=await api('/api/update/apply',{method:'POST'});
+  if(r.ok){ $('#upd_result').innerHTML='✓ updated — <b>restart the console</b> to apply (Ctrl-C, then <code>python3 -m atpt serve</code>).<pre class=out>'+esc(r.output||'')+'</pre>'; checkUpdate(); }
+  else { $('#upd_result').innerHTML='⚠ '+esc(r.output||r.error||'update failed')+'<pre class=out>'+esc(r.output||'')+'</pre>'; }
+});
 document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>{if(['providers','subs','ollama','ladder','models'].includes(b.dataset.tab))syncFromDom();showTab(b.dataset.tab);});
 $('#lm_prov')&&($('#lm_prov').onchange=fillModelOptions);
 $('#lm_add')&&($('#lm_add').onclick=()=>{

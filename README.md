@@ -51,7 +51,19 @@ Modules self-sequence on tokens (`target → asset → finding → validated_fin
 Zero-dependency core — Python ≥ 3.10 stdlib only. The optional scanners are never
 installed silently; add them with `--with-tools`.
 
-**One-line install:**
+**One-line install (curl):**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/avitwil/ATPTmaster/main/bootstrap.sh | bash
+```
+
+Pass a target dir and/or installer flags after `-s --`, e.g. install the optional tools too:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/avitwil/ATPTmaster/main/bootstrap.sh | bash -s -- atpt --with-tools
+```
+
+Or clone it yourself:
 
 ```bash
 git clone https://github.com/avitwil/ATPTmaster.git atpt && cd atpt && ./install.sh
