@@ -8,8 +8,18 @@ license = "Apache-2.0"
 authors = [{ name = "Avi Twil", email = "avitwil@gmail.com" }]
 dependencies = []                      # core is stdlib-only for portability
 
+[project.optional-dependencies]
+# Native desktop window. Installed only for the desktop app path — the core and
+# web console never require it (atpt falls back to a browser window without it).
+desktop = ["pywebview>=4.4"]
+# Toolchain for producing the double-click installable bundles (see packaging/).
+build = ["pywebview>=4.4", "pyinstaller>=6.3"]
+
 [project.scripts]
 atpt = "atpt.cli:main"
+
+[project.gui-scripts]
+atpt-desktop = "atpt.desktop:launch"
 
 [build-system]
 requires = ["setuptools>=68"]

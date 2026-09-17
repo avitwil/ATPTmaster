@@ -148,14 +148,22 @@ def cmd_serve(args):
     return 0
 
 
+def cmd_desktop(args):
+    from .desktop import launch
+    return launch(host=args.host)
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     # `atpt --u` / `--ui` / `-u`  →  launch the web console (optionally --port/--host).
     if argv and argv[0] in ("--u", "--ui", "-u"):
         argv = ["serve"] + argv[1:]
+    # `atpt --app` / `--desktop` / `-d`  →  launch the native desktop app.
+    elif argv and argv[0] in ("--app", "--desktop", "-d"):
+        argv = ["desktop"] + argv[1:]
 
     p = argparse.ArgumentParser(prog="atpt", description="ATPTmaster core driver",
-                                epilog="tip: `atpt --u` launches the web console.")
+                                epilog="tip: `atpt --u` launches the web console; `atpt --app` the desktop app.")
     sub = p.add_subparsers(dest="cmd")
 
     pi = sub.add_parser("init", help="create/refresh an engagement from a scope file")
@@ -199,6 +207,10 @@ def main(argv=None):
     pw.add_argument("--port", type=int, default=8787)
     pw.add_argument("--host", default="127.0.0.1")
     pw.set_defaults(func=cmd_serve)
+
+    pd = sub.add_parser("desktop", help="launch as a native desktop app (also: atpt --app)")
+    pd.add_argument("--host", default="127.0.0.1")
+    pd.set_defaults(func=cmd_desktop)
 
     args = p.parse_args(argv)
     if not getattr(args, "func", None):        # bare `atpt` → show help, don't error

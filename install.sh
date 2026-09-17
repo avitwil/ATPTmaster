@@ -106,10 +106,43 @@ EOF
 chmod +x "$BIN_DIR/atpt"
 echo "[*] installed 'atpt' launcher -> $BIN_DIR/atpt"
 echo "    run:  atpt --u        # launch the web console"
+echo "          atpt --app      # launch as a desktop app"
 echo "          atpt --help     # all commands"
 case ":$PATH:" in
   *":$BIN_DIR:"*) : ;;
   *) echo "[!] $BIN_DIR is not on your PATH — add it:  export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
+esac
+
+# --- desktop icon -----------------------------------------------------------
+# Add a clickable launcher so the console opens as a desktop app (no terminal).
+# `atpt --app` opens a native window (pywebview) if present, else a chromeless
+# browser window. On Linux we drop a .desktop entry + icon into the user's app
+# grid; on macOS we point at the packaged .app build instead.
+case "$(uname -s)" in
+  Linux)
+    APP_DIR="$HOME/.local/share/applications"; ICON_DIR="$HOME/.local/share/icons"
+    mkdir -p "$APP_DIR" "$ICON_DIR"
+    ICON_SRC="$here/atpt/assets/logo.png"
+    ICON_DST="$ICON_DIR/atptmaster.png"
+    [ -f "$ICON_SRC" ] && cp -f "$ICON_SRC" "$ICON_DST" || ICON_DST="utilities-terminal"
+    cat > "$APP_DIR/atptmaster.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=ATPTmaster
+Comment=Autonomous Pentest Framework
+Exec=$BIN_DIR/atpt --app
+Icon=$ICON_DST
+Terminal=false
+Categories=Security;Network;
+EOF
+    chmod +x "$APP_DIR/atptmaster.desktop"
+    command -v update-desktop-database >/dev/null 2>&1 && \
+      update-desktop-database "$APP_DIR" >/dev/null 2>&1 || true
+    echo "[*] desktop icon installed -> $APP_DIR/atptmaster.desktop"
+    ;;
+  Darwin)
+    echo "[*] macOS: build a double-click app with:  pip install -e '.[build]' && packaging/build.sh"
+    ;;
 esac
 if [ "$DO_PIPX" = 1 ]; then
   command -v pipx >/dev/null && { pipx install -e "$here" && echo "[*] also installed via pipx"; } \
@@ -145,6 +178,7 @@ fi
 
 echo "[*] smoke test:  atpt modules"
 echo "[*] launch console:  atpt --u    # http://127.0.0.1:8787"
+echo "[*] launch desktop app:  atpt --app    (or click the ATPTmaster icon)"
 echo
 show_logo
 printf '%s  ✔ Installation complete — ATPT master is ready.%s\n\n' "$OK" "$RST"

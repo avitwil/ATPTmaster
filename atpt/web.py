@@ -581,7 +581,12 @@ class WebApp:
         return self._json(200, {"reply": reply, "status": s})
 
 
-def serve(project_dir, port=8787, host="127.0.0.1"):
+def make_server(project_dir, port=8787, host="127.0.0.1"):
+    """Build the console's ThreadingHTTPServer without starting it.
+
+    Returns the httpd; the caller runs it (serve_forever, or in a thread for the
+    desktop app). Shared by `serve` (blocking CLI) and `atpt/desktop.py`.
+    """
     app = WebApp(project_dir)
     # DNS-rebinding defense: a localhost bind only answers to localhost Host headers.
     # An explicit wildcard bind (0.0.0.0) opts out — that exposure is documented.
@@ -620,7 +625,11 @@ def serve(project_dir, port=8787, host="127.0.0.1"):
         def log_message(self, *a):
             pass
 
-    httpd = ThreadingHTTPServer((host, port), Handler)
+    return ThreadingHTTPServer((host, port), Handler)
+
+
+def serve(project_dir, port=8787, host="127.0.0.1"):
+    httpd = make_server(project_dir, port=port, host=host)
     print(f"ATPTmaster console: http://{host}:{port}  (Ctrl-C to stop)")
     try:
         httpd.serve_forever()
