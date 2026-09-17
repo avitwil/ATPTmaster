@@ -1,3 +1,9 @@
+<p align="center">
+  <img src="atpt/assets/logo.png" alt="ATPTmaster" width="320">
+</p>
+
+<p align="center"><em>Autonomous Pentest Framework — by Avi Twil</em></p>
+
 # ATPTmaster
 
 A modular, autonomous **penetration-testing framework** for Kali Linux. Integration-first:
