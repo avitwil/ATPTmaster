@@ -150,8 +150,15 @@ with a `FakeExecutor` + `FakeBrain`.**
 - `APBExecutor` maps our `Action.tool` → APB's tool objects
   (`execute_bash`/`ssh_connect`/`write_file`/`final_answer`) via APB's
   `PentestDriver`; observations are the tool outputs.
-- Scoring: APB `evaluation.Evaluator` over the achieved milestones. Episode is
-  "solved" per APB's own criterion; we also record milestone counts.
+- Scoring: APB `evaluation.Evaluator` over the achieved milestones, but its
+  judge is redirected to a **local** model — APB ships a GPT-4o judge
+  (`instructor.from_openai(OpenAI(...))`, hardcoded `model='gpt-4o'`, needs an
+  OpenAI key and egresses transcripts). We keep APB's milestone logic and swap
+  the client: `instructor.from_openai(OpenAI(base_url="http://localhost:11434/v1",
+  api_key="ollama"))` with `model="qwen2.5:7b"` (already pulled). Offline, free,
+  on-brand. Results are labeled "local-judge (qwen2.5:7b)", not the official
+  GPT-4o score. `instructor`+`openai` come with APB's install. Episode is
+  "solved" per APB's criterion; we also record milestone counts.
 - **Interpreter:** `bench/` runs under one interpreter that can import *both*
   `atpt.reasoning` (repo root on `PYTHONPATH`) and `autopenbench`. Concretely:
   `pip install -e /home/avi/Projects/benchmarks/auto-pen-bench` into the same
