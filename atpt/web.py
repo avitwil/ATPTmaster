@@ -231,6 +231,13 @@ class WebApp:
                 return self._json(200, self._get_ctf(store, eid))
             if method == "POST":
                 return self._save_ctf(store, eid, data)
+        if path == "/api/mode" and method == "POST":
+            mode = data.get("mode")
+            if mode not in ("step", "semi", "full"):
+                return self._json(400, {"error": "mode must be step/semi/full"})
+            store.set_mode(eid, mode)
+            store.add_event(eid, None, None, "info", "mode_set", f"mode set to {mode} via UI", None)
+            return self._json(200, {"ok": True, "mode": mode})
 
         return self._json(404, {"error": "no such route"})
 
@@ -477,14 +484,19 @@ th{color:var(--mut);font-weight:600}
 @media(max-width:900px){.wrap{grid-template-columns:1fr}.brandlogo{max-height:200px}}
 /* settings modal */
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:flex-start;justify-content:center;z-index:50;padding:24px;overflow:auto}
-.sheet{background:var(--panel);border:1px solid var(--edge);border-radius:12px;width:100%;max-width:720px;display:flex;flex-direction:column;max-height:90vh}
+.sheet{background:var(--panel);border:1px solid var(--edge);border-radius:12px;width:100%;max-width:880px;display:flex;flex-direction:column;max-height:90vh;overflow:hidden}
 .sheettop,.sheetbot{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--edge)}
 .sheetbot{border-bottom:0;border-top:1px solid var(--edge);justify-content:flex-end}
 .sheettop b{font-size:15px}.sheettop .sp{flex:1}
-.tabs{display:flex;flex-wrap:wrap;gap:4px;padding:10px 12px 0}
-.tab{background:transparent;border:1px solid transparent;color:var(--mut);border-radius:6px 6px 0 0;padding:6px 10px}
-.tab.on{color:var(--fg);border-color:var(--edge);border-bottom-color:var(--panel);background:var(--field)}
-.panels{padding:16px;overflow:auto}
+.sheetbody{display:flex;min-height:0;flex:1;overflow:hidden}
+.navcol{width:196px;flex:none;border-right:1px solid var(--edge);overflow:auto;padding:8px;display:flex;flex-direction:column;gap:2px}
+.navgrp{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);padding:10px 8px 2px}
+.nav{background:transparent;border:1px solid transparent;color:var(--fg);text-align:left;padding:7px 10px;border-radius:6px}
+.nav:hover{background:var(--field)}
+.nav.on{background:var(--acc);border-color:var(--acc);color:#fff}
+.headlogo{height:52px;width:auto;display:block}
+.hicon{font-size:18px;line-height:1;padding:4px 10px}
+.panels{padding:16px;overflow:auto;flex:1}
 .panel{display:flex;flex-direction:column;gap:10px}
 .prow{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:end;border:1px solid var(--edge);border-radius:8px;padding:10px}
 .prow label{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--mut)}
@@ -502,39 +514,20 @@ pre.out{background:var(--field);border:1px solid var(--edge);border-radius:6px;p
 </style></head>
 <body>
 <header>
-  <b>🛡️ ATPTmaster</b><span class="muted">autonomous pentest console</span>
-  <span class="sp"></span>
+  <button class="ghost hicon" id="menubtn" title="Menu">☰</button>
+  <b>ATPTmaster</b>
   <select id="engsel" title="engagement"></select>
-  <select id="mode"><option value="step">step</option><option value="semi" selected>semi</option><option value="full">full</option></select>
-  <label class="muted" style="display:flex;gap:4px;align-items:center"><input type="checkbox" id="dry" style="width:auto"> dry-run</label>
+  <span class="sp"></span>
   <button id="runbtn">▶ Run</button>
-  <button class="ghost" id="dlbtn">⬇ Download report</button>
-  <button class="ghost" id="setbtn" title="Settings">⚙ Settings</button>
+  <button class="ghost hidden" id="pausebtn">⏸ Pause</button>
+  <button class="ghost hidden" id="stopbtn">⏹ Stop</button>
+  <img class="headlogo" src="/assets/logo.png" alt="ATPTmaster" title="ATPTmaster">
 </header>
 
 <div class="wrap">
   <div class="col">
-    <div class="card brandcard"><img class="brandlogo" src="/assets/logo.png" alt="ATPTmaster"></div>
-    <div class="card" id="newcard">
-      <h3>1 · Define scope &amp; target</h3>
-      <div class="grid2">
-        <label>Engagement id<input id="f_id" placeholder="acme-2026"></label>
-        <label>Name<input id="f_name" placeholder="Acme external"></label>
-        <label>In-scope domains (comma)<input id="f_dom" placeholder="acme.com, api.acme.com"></label>
-        <label>In-scope CIDRs (comma)<input id="f_cidr" placeholder="203.0.113.0/24"></label>
-        <label>Out-of-scope (comma)<input id="f_out" placeholder="mail.acme.com"></label>
-        <label>Default mode
-          <select id="f_mode"><option>step</option><option selected>semi</option><option>full</option></select></label>
-      </div>
-      <div class="row" style="margin-top:8px">
-        <button id="createbtn">Create engagement</button>
-        <button class="ghost" id="demobtn">Load demo (no tools needed)</button>
-        <span class="muted" id="createmsg"></span>
-      </div>
-    </div>
-
     <div class="card">
-      <h3>2 · Chat control</h3>
+      <h3>Chat control</h3>
       <div id="chatlog"></div>
       <div class="chatbar">
         <input id="chatin" placeholder="type: run · plan · status · approve <module> · report">
@@ -546,6 +539,11 @@ pre.out{background:var(--field);border:1px solid var(--edge);border-radius:6px;p
       <h3>Status</h3>
       <div class="stat" id="stat"><span class="muted">no engagement selected</span></div>
       <div id="approvals" style="margin-top:8px"></div>
+      <div class="row" style="margin-top:10px">
+        <button class="ghost" id="menuScope">Define scope &amp; target</button>
+        <button class="ghost" id="demobtn">Load demo</button>
+        <span class="muted" id="createmsg"></span>
+      </div>
     </div>
   </div>
 
@@ -563,71 +561,119 @@ pre.out{background:var(--field);border:1px solid var(--edge);border-radius:6px;p
 
 <div id="settings" class="modal hidden">
   <div class="sheet">
-    <div class="sheettop"><b>⚙ Settings</b><span class="sp"></span>
+    <div class="sheettop"><b>☰ ATPTmaster settings</b><span class="sp"></span>
       <button class="ghost" id="setclose">✕</button></div>
-    <div class="tabs">
-      <button class="tab on" data-tab="providers">Providers (API key)</button>
-      <button class="tab" data-tab="subs">Subscription CLI</button>
-      <button class="tab" data-tab="ollama">Local LLM</button>
-      <button class="tab" data-tab="ladder">Model ladder</button>
-      <button class="tab" data-tab="operator">Operator</button>
-      <button class="tab" data-tab="ctf">CTF</button>
-    </div>
-    <div class="panels">
-      <div class="panel" data-panel="providers">
-        <div class="hint">Hosted API providers. Choose <b>paste key</b> (stored on this machine) or <b>env var</b> (read from the environment at call time — nothing stored).</div>
-        <div id="httpList"></div>
-        <button class="ghost" id="addHttp">+ Add API provider</button>
-      </div>
-      <div class="panel hidden" data-panel="subs">
-        <div class="hint">Subscription CLIs you're logged into. Claude, Gemini &amp; Codex are ready by default — press <b>Install (auto)</b> and it installs dependencies + the CLI for you (asks only for your sudo password). Or add your own with <b>+ Custom CLI</b>.</div>
-        <div id="subList"></div>
-        <button class="ghost" id="addSub">+ Custom CLI provider</button>
-      </div>
-      <div class="panel hidden" data-panel="ollama">
-        <div class="hint">Local models via <b>Ollama</b>. Nothing leaves your machine.</div>
-        <div id="ollamaList"></div>
-        <button class="ghost" id="addOllama">+ Add local model</button>
-      </div>
-      <div class="panel hidden" data-panel="ladder">
-        <div class="hint">Try providers top-to-bottom; fall back on error/refusal. Policy limits which run per phase.</div>
-        <ul class="ladder" id="ladder"></ul>
-        <div class="prow" style="grid-template-columns:1fr 1fr 1fr">
-          <label>map policy<select id="pol_map"><option>any</option><option>hosted_ok</option><option>local_only</option></select></label>
-          <label>exploit policy<select id="pol_exploit"><option>any</option><option>hosted_ok</option><option>local_only</option></select></label>
-          <label>report policy<select id="pol_report"><option>any</option><option>hosted_ok</option><option>local_only</option></select></label>
+    <div class="sheetbody">
+      <nav class="navcol">
+        <div class="navgrp">User</div>
+        <button class="nav on" data-tab="userinfo">User info</button>
+        <div class="navgrp">AI settings</div>
+        <button class="nav" data-tab="providers">API providers</button>
+        <button class="nav" data-tab="subs">Subscription CLI</button>
+        <button class="nav" data-tab="ollama">Local LLM</button>
+        <button class="nav" data-tab="models">Models</button>
+        <div class="navgrp">Scope</div>
+        <button class="nav" data-tab="scope">Target &amp; scope</button>
+        <button class="nav" data-tab="ctf">CTF / engagement</button>
+        <div class="navgrp">App settings</div>
+        <button class="nav" data-tab="appmode">Mode</button>
+        <button class="nav" data-tab="appearance">Appearance</button>
+        <button class="nav" data-tab="ladder">Model ladder</button>
+        <button class="nav" data-tab="report">Report</button>
+      </nav>
+      <div class="panels">
+        <div class="panel" data-panel="userinfo">
+          <div class="hint">Your details — the <b>name</b> appears on generated reports. Stored locally.</div>
+          <div class="grid2">
+            <label>Name<input id="ui_name" placeholder="Avi Twil"></label>
+            <label>Company<input id="ui_company" placeholder="Acme Security"></label>
+            <label>Phone<input id="ui_phone" placeholder="+972 50 000 0000"></label>
+            <label>Email<input id="ui_email" placeholder="you@example.com"></label>
+          </div>
         </div>
-      </div>
-      <div class="panel hidden" data-panel="operator">
-        <div class="prow" style="grid-template-columns:1fr">
-          <label class="full">Pentester name (appears on the report)<input id="s_name" placeholder="e.g. Avi Twil"></label>
+        <div class="panel hidden" data-panel="providers">
+          <div class="hint">Hosted API providers. Per provider, <b>paste a key</b> (stored on this machine) or name an <b>env var</b> (read at call time — nothing stored).</div>
+          <div id="httpList"></div>
+          <button class="ghost" id="addHttp">+ Add API provider</button>
         </div>
-        <div class="prow" style="grid-template-columns:1fr">
-          <div class="toggle"><input type="checkbox" id="s_theme"> <label for="s_theme" style="color:var(--fg)">Light theme</label></div>
+        <div class="panel hidden" data-panel="subs">
+          <div class="hint">Subscription CLIs you're logged into. Claude, Gemini &amp; Codex are ready by default — <b>Install (auto)</b> installs dependencies + the CLI (asks only for your sudo password). Or add your own with <b>+ Custom CLI</b>.</div>
+          <div id="subList"></div>
+          <button class="ghost" id="addSub">+ Custom CLI provider</button>
         </div>
-        <div class="prow" style="grid-template-columns:1fr">
-          <div class="toggle"><input type="checkbox" id="s_sudo"> <label for="s_sudo" style="color:var(--fg)">Allow sudo (privileged scans)</label></div>
+        <div class="panel hidden" data-panel="ollama">
+          <div class="hint">Local models via <b>Ollama</b>. Nothing leaves your machine.</div>
+          <div id="ollamaList"></div>
+          <button class="ghost" id="addOllama">+ Add local model</button>
+        </div>
+        <div class="panel hidden" data-panel="models">
+          <div class="hint">The available models for each configured provider will be listed here (fetched live from the provider) in the next update.</div>
+        </div>
+        <div class="panel hidden" data-panel="scope">
+          <div class="hint">Define the engagement target and scope. <span class="muted">(Domain-typed scope — Infra / Web / Mobile / AI — with per-domain rules is coming next.)</span></div>
+          <div class="grid2">
+            <label>Engagement id<input id="f_id" placeholder="acme-2026"></label>
+            <label>Target name<input id="f_name" placeholder="Acme external"></label>
+            <label>In-scope domains (comma)<input id="f_dom" placeholder="acme.com, api.acme.com"></label>
+            <label>In-scope CIDRs (comma)<input id="f_cidr" placeholder="203.0.113.0/24"></label>
+            <label>Out-of-scope (comma)<input id="f_out" placeholder="mail.acme.com"></label>
+            <label>Default mode<select id="f_mode"><option>step</option><option selected>semi</option><option>full</option></select></label>
+          </div>
+          <div class="row" style="margin-top:8px">
+            <button id="createbtn">Create / update engagement</button>
+            <span class="hint" id="createmsg"></span>
+          </div>
+        </div>
+        <div class="panel hidden" data-panel="ctf">
+          <div class="hint" id="ctfEng">Applies to the selected engagement.</div>
+          <label class="hint full">Goals — what the LLM should look for<textarea id="c_goals" rows="3" placeholder="e.g. find user.txt and root.txt; enumerate web + SSH"></textarea></label>
+          <label class="hint">VPN config file (path on this machine)<input id="c_vpn" placeholder="/home/kali/htb.ovpn"></label>
+          <div class="prow full">
+            <label>Attack-box host<input id="c_ab_host" placeholder="10.10.14.1"></label>
+            <label>Attack-box user<input id="c_ab_user" placeholder="kali"></label>
+            <label class="full">Attack-box password (memory only) or key path below
+              <input type="password" id="c_ab_pw" autocomplete="off" placeholder="••••••••"></label>
+            <label class="full">SSH key path (optional, stored)<input id="c_ab_key" placeholder="/home/kali/.ssh/id_ed25519"></label>
+          </div>
+          <button class="ghost" id="ctfSave">Save CTF settings</button>
+          <span class="hint" id="ctfMsg"></span>
+        </div>
+        <div class="panel hidden" data-panel="appmode">
+          <div class="hint">Run mode for the selected engagement.</div>
+          <label class="full">Mode<select id="a_mode">
+            <option value="step">Step-by-step — you approve each step</option>
+            <option value="semi" selected>Semi-auto — approve only exploits &amp; attacks</option>
+            <option value="full">Full auto — YOLO</option>
+          </select></label>
+          <span class="hint" id="a_modemsg"></span>
+        </div>
+        <div class="panel hidden" data-panel="appearance">
+          <label class="full">Theme<select id="a_theme">
+            <option value="system">System</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select></label>
+          <div class="toggle" style="margin-top:12px"><input type="checkbox" id="s_sudo"> <label for="s_sudo" style="color:var(--fg)">Allow sudo (privileged scans)</label></div>
           <div id="sudoPwWrap" class="full hidden">
-            <label class="hint">Sudo password (kept in memory only, never saved to disk, re-asked after restart)
+            <label class="hint">Sudo password (memory only, never saved to disk, re-asked after restart)
               <input type="password" id="s_sudopw" placeholder="••••••••" autocomplete="off"></label>
             <button class="ghost" id="sudoPwBtn" style="margin-top:6px">Set sudo password</button>
             <span class="hint" id="sudoPwMsg"></span>
           </div>
         </div>
-      </div>
-      <div class="panel hidden" data-panel="ctf">
-        <div class="hint" id="ctfEng">Applies to the selected engagement.</div>
-        <label class="hint full">Goals — what the LLM should look for<textarea id="c_goals" rows="3" placeholder="e.g. find user.txt and root.txt; enumerate web + SSH"></textarea></label>
-        <label class="hint">VPN config file (path on this machine)<input id="c_vpn" placeholder="/home/kali/htb.ovpn"></label>
-        <div class="prow full">
-          <label>Attack-box host<input id="c_ab_host" placeholder="10.10.14.1"></label>
-          <label>Attack-box user<input id="c_ab_user" placeholder="kali"></label>
-          <label class="full">Attack-box password (memory only) or key path below
-            <input type="password" id="c_ab_pw" autocomplete="off" placeholder="••••••••"></label>
-          <label class="full">SSH key path (optional, stored)<input id="c_ab_key" placeholder="/home/kali/.ssh/id_ed25519"></label>
+        <div class="panel hidden" data-panel="ladder">
+          <div class="hint">Try providers top-to-bottom; fall back on error/refusal. Policy limits which run per phase.</div>
+          <ul class="ladder" id="ladder"></ul>
+          <div class="prow" style="grid-template-columns:1fr 1fr 1fr">
+            <label>map policy<select id="pol_map"><option>any</option><option>hosted_ok</option><option>local_only</option></select></label>
+            <label>exploit policy<select id="pol_exploit"><option>any</option><option>hosted_ok</option><option>local_only</option></select></label>
+            <label>report policy<select id="pol_report"><option>any</option><option>hosted_ok</option><option>local_only</option></select></label>
+          </div>
         </div>
-        <button class="ghost" id="ctfSave">Save CTF settings</button>
-        <span class="hint" id="ctfMsg"></span>
+        <div class="panel hidden" data-panel="report">
+          <div class="hint">Download the PTES report. <span class="muted">(Customization — pick findings, add screenshots and your own mitigation/impact notes — is coming next.)</span></div>
+          <button id="rp_dl">⬇ Download PTES report</button>
+        </div>
       </div>
     </div>
     <div class="sheetbot"><span class="hint" id="setmsg"></span>
@@ -645,12 +691,15 @@ const sevCls=s=>SEVS.includes((s||'').toLowerCase())?(''+s).toLowerCase():'info'
 const stCls=s=>STATS.includes(s)?s:'candidate';
 function chat(cls,html){const d=document.createElement('div');d.className='msg '+cls;d.innerHTML=html;$('#chatlog').appendChild(d);$('#chatlog').scrollTop=1e9}
 
+let ENGS=[], MODE='semi';
+function syncMode(){ MODE=(ENGS.find(e=>e.id===ENG)||{}).mode||'semi'; }
 async function refreshEngagements(sel){
   const {engagements}=await api('/api/engagements');
+  ENGS=engagements;
   const s=$('#engsel');s.innerHTML='';
   engagements.forEach(e=>{const o=document.createElement('option');o.value=e.id;o.textContent=e.id+' — '+(e.name||'');s.appendChild(o)});
   if(sel){s.value=sel}
-  ENG=s.value||null;
+  ENG=s.value||null; syncMode();
   if(ENG)await refreshAll();
 }
 async function refreshAll(){ if(!ENG)return; await Promise.all([refreshStatus(),refreshFindings(),refreshTree()]); }
@@ -697,8 +746,9 @@ $('#createbtn').onclick=async()=>{
   const r=await api('/api/engagement',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({engagement:$('#f_id').value.trim(),name:$('#f_name').value.trim(),scope,mode:$('#f_mode').value})});
   if(r.error){$('#createmsg').textContent='⚠ '+r.error;return}
-  $('#createmsg').textContent='';chat('sys','Engagement <b>'+esc(r.engagement.id)+'</b> created. Scope locked. Send <b>run</b>.');
+  $('#createmsg').textContent='saved ✓';chat('sys','Engagement <b>'+esc(r.engagement.id)+'</b> created. Scope locked. Send <b>run</b>.');
   await refreshEngagements(r.engagement.id);
+  $('#settings').classList.add('hidden');
 };
 $('#demobtn').onclick=async()=>{
   const r=await api('/api/demo',{method:'POST'});
@@ -717,20 +767,25 @@ async function send(){
 }
 $('#sendbtn').onclick=send;$('#chatin').addEventListener('keydown',e=>{if(e.key==='Enter')send()});
 $('#runbtn').onclick=async()=>{
-  if(!ENG){chat('sys','Create or select an engagement first.');return}
+  if(!ENG){chat('sys','Create or select an engagement first (☰ menu → Scope).');return}
   const r=await api('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({eng:ENG,mode:$('#mode').value,dry_run:$('#dry').checked})});
-  chat('sys','Ran <b>'+$('#mode').value+'</b>'+($('#dry').checked?' (dry-run)':'')+': executed '+JSON.stringify(r.result.executed)+
+    body:JSON.stringify({eng:ENG,mode:MODE})});
+  chat('sys','Ran <b>'+MODE+'</b>: executed '+JSON.stringify(r.result.executed)+
     (r.result.gated_on?' · ⏸ paused before <b>'+esc(r.result.gated_on)+'</b> (approve to continue)':''));
   await refreshAll();
 };
-$('#dlbtn').onclick=()=>{ if(!ENG){chat('sys','No engagement selected.');return} window.location='/api/report?eng='+encodeURIComponent(ENG); };
-$('#engsel').onchange=async()=>{ENG=$('#engsel').value;await refreshAll()};
+function downloadReport(){ if(!ENG){chat('sys','No engagement selected.');return} window.location='/api/report?eng='+encodeURIComponent(ENG); }
+$('#engsel').onchange=async()=>{ENG=$('#engsel').value;syncMode();await refreshAll()};
 
 /* ===== Settings ===== */
 let SET={}, HTTP=[], SUB=[], OLLAMA=[], PREF=[], PSTATUS={};
-function applyTheme(light){document.documentElement.setAttribute('data-theme',light?'light':'dark');}
-try{applyTheme(localStorage.getItem('atpt_theme')==='light');}catch(e){}
+function applyTheme(mode){ // 'system' | 'light' | 'dark'
+  const el=document.documentElement;
+  if(mode==='light'||mode==='dark') el.setAttribute('data-theme',mode);
+  else el.removeAttribute('data-theme');   // system → follow prefers-color-scheme
+}
+function themePref(){try{return localStorage.getItem('atpt_theme')||'system';}catch(e){return 'system';}}
+applyTheme(themePref());
 
 function decompose(){
   HTTP=[];SUB=[];OLLAMA=[];
@@ -837,21 +892,24 @@ function wireRows(){
 }
 async function loadStatuses(){const r=await api('/api/providers/status');PSTATUS={};(r.providers||[]).forEach(p=>PSTATUS[p.name]=p);}
 
-function showTab(t){document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x.dataset.tab===t));
+function showTab(t){document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('on',x.dataset.tab===t));
   document.querySelectorAll('.panel').forEach(x=>x.classList.toggle('hidden',x.dataset.panel!==t));
   if(t==='ladder')renderLadder();}
-document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{if(!['operator','ctf'].includes(b.dataset.tab))syncFromDom();showTab(b.dataset.tab);});
+document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>{if(['providers','subs','ollama','ladder'].includes(b.dataset.tab))syncFromDom();showTab(b.dataset.tab);});
 
-async function openSettings(){
+async function openSettings(tab){
   SET=await api('/api/settings');
   await loadStatuses();                 // need known-CLI list before decomposing
   decompose();
-  $('#s_name').value=SET.pentester_name||'';
+  const ui=SET.user_info||{};
+  $('#ui_name').value=ui.name||SET.pentester_name||'';
+  $('#ui_company').value=ui.company||'';$('#ui_phone').value=ui.phone||'';$('#ui_email').value=ui.email||'';
   $('#s_sudo').checked=!!SET.sudo_allowed;$('#sudoPwWrap').classList.toggle('hidden',!SET.sudo_allowed);
-  let light=false;try{light=localStorage.getItem('atpt_theme')==='light';}catch(e){}$('#s_theme').checked=light;
+  $('#a_theme').value=themePref();
+  $('#a_mode').value=MODE;
   renderProviders();renderLadder();
   await loadCtf();
-  showTab('providers');
+  showTab(tab||'userinfo');
   $('#settings').classList.remove('hidden');
 }
 function providersMap(){
@@ -866,12 +924,18 @@ $('#setsave').onclick=async()=>{
   syncFromDom();reconcilePref();
   const reasoning={providers:providersMap(),preference:PREF,
     policy:{map:$('#pol_map').value,exploit:$('#pol_exploit').value,report:$('#pol_report').value}};
-  const body={pentester_name:$('#s_name').value.trim(),sudo_allowed:$('#s_sudo').checked,reasoning};
+  const name=$('#ui_name').value.trim();
+  const user_info={name,company:$('#ui_company').value.trim(),phone:$('#ui_phone').value.trim(),email:$('#ui_email').value.trim()};
+  const body={user_info,pentester_name:name,sudo_allowed:$('#s_sudo').checked,reasoning};
   const r=await api('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   SET=r;decompose();renderProviders();
   $('#setmsg').textContent='Saved ✓';setTimeout(()=>$('#setmsg').textContent='',1500);
 };
-$('#s_theme').onchange=()=>{applyTheme($('#s_theme').checked);try{localStorage.setItem('atpt_theme',$('#s_theme').checked?'light':'dark');}catch(e){}};
+$('#a_theme').onchange=()=>{const v=$('#a_theme').value;applyTheme(v);try{localStorage.setItem('atpt_theme',v);}catch(e){}};
+$('#a_mode').onchange=async()=>{const m=$('#a_mode').value; if(!ENG){$('#a_modemsg').textContent='select an engagement first';return;}
+  await api('/api/mode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({eng:ENG,mode:m})});
+  MODE=m; const e=ENGS.find(x=>x.id===ENG); if(e)e.mode=m; $('#a_modemsg').textContent='mode set to '+m+' ✓';setTimeout(()=>$('#a_modemsg').textContent='',1500);};
+$('#rp_dl').onclick=downloadReport;
 $('#s_sudo').onchange=()=>$('#sudoPwWrap').classList.toggle('hidden',!$('#s_sudo').checked);
 $('#sudoPwBtn').onclick=async()=>{
   const pw=$('#s_sudopw').value;
@@ -899,7 +963,8 @@ $('#ctfSave').onclick=async()=>{
   if(r.error){$('#ctfMsg').textContent='⚠ '+r.error;return;}
   $('#c_ab_pw').value='';$('#ctfMsg').textContent='Saved ✓';setTimeout(()=>$('#ctfMsg').textContent='',1500);
 };
-$('#setbtn').onclick=openSettings;
+$('#menubtn').onclick=()=>openSettings();
+$('#menuScope').onclick=()=>openSettings('scope');
 $('#setclose').onclick=()=>$('#settings').classList.add('hidden');
 $('#settings').onclick=e=>{if(e.target.id==='settings')$('#settings').classList.add('hidden');};
 

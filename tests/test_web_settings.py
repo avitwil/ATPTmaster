@@ -127,3 +127,23 @@ class WebSettingsTest(unittest.TestCase):
     def test_provider_install_unknown_errors(self):
         st, _, body, _ = self._post("/api/providers/install", {"name": "totally-unknown"})
         self.assertEqual(st, 400)
+
+    # --- app mode ------------------------------------------------------------
+    def test_mode_endpoint_sets_engagement_mode(self):
+        self._mk_eng()
+        st, _, _, _ = self._post("/api/mode", {"mode": "full"}, eng="htb1")
+        self.assertEqual(st, 200)
+        self.assertEqual(SQLiteStore(self.dbpath).get_engagement("htb1")["mode"], "full")
+
+    def test_mode_endpoint_rejects_bad_mode(self):
+        self._mk_eng()
+        st, _, _, _ = self._post("/api/mode", {"mode": "yolo"}, eng="htb1")
+        self.assertEqual(st, 400)
+
+    def test_user_info_saved_and_redacted_get_ok(self):
+        self._post("/api/settings", {"user_info": {"name": "Avi", "email": "a@b.co",
+                                                   "company": "Acme", "phone": "123"}})
+        _, _, body, _ = self._get("/api/settings")
+        ui = json.loads(body)["user_info"]
+        self.assertEqual(ui["name"], "Avi")
+        self.assertEqual(ui["company"], "Acme")

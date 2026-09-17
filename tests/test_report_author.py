@@ -35,3 +35,9 @@ class ReportAuthorTest(unittest.TestCase):
         md = self.build(self.store, "e1", Path("."))
         self.assertIn("Prepared by:", md)
         self.assertIn("Avi Twil", md)
+
+    def test_user_info_name_takes_precedence(self):
+        self.store.set_settings({"pentester_name": "Old", "user_info": {"name": "New Name"}})
+        md = self.build(self.store, "e1", Path("."))
+        self.assertIn("New Name", md)
+        self.assertNotIn("Prepared by: Old", md)

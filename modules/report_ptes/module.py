@@ -64,7 +64,8 @@ def build_report_md(store, eid: str, project_dir: Path) -> str:
     L.append(f"- **In-scope networks:** {cidrs}")
     pentester = ""
     if hasattr(store, "get_settings"):
-        pentester = (store.get_settings() or {}).get("pentester_name") or ""
+        s = store.get_settings() or {}
+        pentester = (s.get("user_info") or {}).get("name") or s.get("pentester_name") or ""
     if pentester:
         L.append(f"- **Prepared by:** {pentester}")
     L.append(f"- **Standard:** PTES · CVSS · OWASP Top 10")
