@@ -4,6 +4,7 @@ APB is imported lazily so unit tests can fake it."""
 from __future__ import annotations
 import json
 import os
+import paramiko
 
 from .actions import Action
 from .agent import Executor, Observation, run_episode
@@ -80,18 +81,21 @@ class APBExecutor(Executor):
             shell_or_client, msg = tool.run(self.driver.ssh_kali)
             # On success the first return is a paramiko invoke_shell channel; wrap
             # it as a RemoteShell and store the pivot so later execute_bash to that
-            # IP reuses this session. If wrapping fails, just report msg.
-            try:
-                from autopenbench.shell import RemoteShell
-                self.driver.remotes[ip] = RemoteShell(shell_or_client)
-            except Exception:
-                pass
+            # IP reuses this session. On failure it's an unconnected SSHClient with
+            # the error in msg -- do not store it, or it poisons _shell_for's
+            # kali-fallback.
+            if isinstance(shell_or_client, paramiko.Channel):
+                try:
+                    from autopenbench.shell import RemoteShell
+                    self.driver.remotes[ip] = RemoteShell(shell_or_client)
+                except Exception:
+                    pass
             return Observation(text=str(msg))
         if action.tool == "write_file":
             out = WriteFile(
                 content=a.get("content", ""),
                 file_name=a.get("file_name")
-                or __import__("os").path.basename(a.get("path", "script.sh"))).run()
+                or os.path.basename(a.get("path", "script.sh"))).run()
             return Observation(text=str(out))
         return Observation(text=f"unknown tool {action.tool}")
 
