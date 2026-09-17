@@ -106,6 +106,23 @@ class WebTest(unittest.TestCase):
             "engagement": "../../../../tmp/pwn", "scope": {"in_scope_domains": ["x.com"]}})
         self.assertEqual(st, 400)
 
+    def test_structured_domain_scope_derives_flat_fields(self):
+        st, _, body, _ = self._post("/api/engagement", {
+            "engagement": "acme", "name": "Acme",
+            "scope": {"domains": {
+                "infra": {"enabled": True, "in": ["10.0.0.0/24"], "out": ["10.0.0.5"]},
+                "web": {"enabled": True, "in": ["acme.com"], "out": ["secure.acme.com"]},
+                "mobile": {"enabled": True, "in": ["app.apk"]},
+            }}})
+        self.assertEqual(st, 200)
+        import json as _j
+        scope = _j.loads(SQLiteStore(self.db).get_engagement("acme")["scope"])
+        self.assertEqual(scope["in_scope_cidrs"], ["10.0.0.0/24"])
+        self.assertEqual(scope["in_scope_domains"], ["acme.com"])
+        self.assertEqual(scope["out_of_scope_cidrs"], ["10.0.0.5"])
+        self.assertEqual(scope["out_of_scope"], ["secure.acme.com"])
+        self.assertIn("mobile", scope["domains"])          # metadata preserved
+
     def test_logo_asset_served(self):
         st, ct, body, _ = self._get("/assets/logo.png")
         self.assertEqual(st, 200)

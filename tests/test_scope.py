@@ -31,6 +31,13 @@ class ScopeTest(unittest.TestCase):
     def test_empty_scope_denies(self):
         self.assertFalse(in_scope({}, "acme.com"))
 
+    def test_out_of_scope_cidr_deny_wins(self):
+        s = {"in_scope_cidrs": ["10.0.0.0/24"], "out_of_scope_cidrs": ["10.0.0.5/32", "10.0.0.64/26"]}
+        self.assertTrue(in_scope(s, "10.0.0.9"))        # in the /24, not denied
+        self.assertFalse(in_scope(s, "10.0.0.5"))       # single-IP deny
+        self.assertFalse(in_scope(s, "10.0.0.70"))      # inside denied /26
+        self.assertFalse(in_scope(s, "http://10.0.0.5:8080/"))
+
     def test_userinfo_stripped(self):
         self.assertTrue(in_scope(SCOPE, "http://user:pass@acme.com/"))
         # a credential-embedded URL pointing at an out-of-scope host is still out

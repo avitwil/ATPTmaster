@@ -44,6 +44,42 @@ def _load_report_builder(project_dir: Path):
     return mod.build_report_md
 
 
+_SCOPE_HOST_DOMAINS = {"web", "api", "ai", "cloud"}   # host/domain-based
+# infra -> CIDRs; mobile/wireless -> metadata only (not host-enforceable)
+
+
+def _derive_scope(scope: dict) -> dict:
+    """Compute the flat oracle fields (in_scope_domains / in_scope_cidrs /
+    out_of_scope / out_of_scope_cidrs) from a structured `domains` block, so the
+    scope oracle keeps working while the UI edits per-domain rules. Legacy flat
+    scopes (no `domains`) pass through unchanged."""
+    doms = scope.get("domains") or {}
+    if not doms:
+        return scope
+    d_in = list(scope.get("in_scope_domains") or [])
+    c_in = list(scope.get("in_scope_cidrs") or [])
+    d_out = list(scope.get("out_of_scope") or [])
+    c_out = list(scope.get("out_of_scope_cidrs") or [])
+    for key, d in doms.items():
+        if not isinstance(d, dict) or not d.get("enabled"):
+            continue
+        ins = [x for x in (d.get("in") or []) if x]
+        outs = [x for x in (d.get("out") or []) if x]
+        if key == "infra":
+            c_in += ins
+            c_out += outs
+        elif key in _SCOPE_HOST_DOMAINS:
+            d_in += ins
+            d_out += outs
+        # mobile / wireless: stored in `domains`, not host-enforceable
+    out = dict(scope)
+    out["in_scope_domains"] = sorted(set(d_in))
+    out["in_scope_cidrs"] = sorted(set(c_in))
+    out["out_of_scope"] = sorted(set(d_out))
+    out["out_of_scope_cidrs"] = sorted(set(c_out))
+    return out
+
+
 def _redact_settings(s: dict) -> dict:
     """Return a copy safe to send to the client: stored API keys become a
     boolean `has_key` presence flag — the value never leaves the server."""
@@ -233,6 +269,10 @@ class WebApp:
                 return self._json(200, self._get_ctf(store, eid))
             if method == "POST":
                 return self._save_ctf(store, eid, data)
+        if path == "/api/scope" and method == "GET":
+            eng = store.get_engagement(eid)
+            return self._json(200, {"scope": json.loads(eng.get("scope") or "{}"),
+                                    "name": eng.get("name"), "mode": eng.get("mode")})
         if path == "/api/mode" and method == "POST":
             mode = data.get("mode")
             if mode not in ("step", "semi", "full"):
@@ -245,7 +285,7 @@ class WebApp:
 
     def _create_engagement(self, data):
         eid = (data.get("engagement") or "").strip()
-        scope = data.get("scope") or {}
+        scope = _derive_scope(data.get("scope") or {})
         has_target = bool(scope.get("in_scope_domains") or scope.get("in_scope_cidrs"))
         if not valid_eid(eid):
             return self._json(400, {"error": "engagement id must be 1-64 chars of [A-Za-z0-9_-]"})
@@ -625,16 +665,14 @@ pre.out{background:var(--field);border:1px solid var(--edge);border-radius:6px;p
           <div id="modelsList"></div>
         </div>
         <div class="panel hidden" data-panel="scope">
-          <div class="hint">Define the engagement target and scope. <span class="muted">(Domain-typed scope — Infra / Web / Mobile / AI — with per-domain rules is coming next.)</span></div>
+          <div class="hint">Define the target and per-domain scope. Tick the domains in play; for each, list what's in scope and (optionally) what's explicitly out.</div>
           <div class="grid2">
             <label>Engagement id<input id="f_id" placeholder="acme-2026"></label>
             <label>Target name<input id="f_name" placeholder="Acme external"></label>
-            <label>In-scope domains (comma)<input id="f_dom" placeholder="acme.com, api.acme.com"></label>
-            <label>In-scope CIDRs (comma)<input id="f_cidr" placeholder="203.0.113.0/24"></label>
-            <label>Out-of-scope (comma)<input id="f_out" placeholder="mail.acme.com"></label>
             <label>Default mode<select id="f_mode"><option>step</option><option selected>semi</option><option>full</option></select></label>
           </div>
-          <div class="row" style="margin-top:8px">
+          <div id="scopeDomains" style="margin-top:10px;display:flex;flex-direction:column;gap:8px"></div>
+          <div class="row" style="margin-top:10px">
             <button id="createbtn">Create / update engagement</button>
             <span class="hint" id="createmsg"></span>
           </div>
@@ -763,12 +801,54 @@ async function refreshTree(){
        ${esc(f.title)} <span class="st-${stCls(f.status)} muted">${esc(f.status)}</span></li>`).join('')}</ul></div>`).join('');
 }
 
+const SCOPE_DOMAINS=[
+  {key:'infra',   label:'Infrastructure', inHint:'in-scope CIDRs / IPs (e.g. 203.0.113.0/24)', outHint:'out-of-scope IPs / CIDRs', out:true},
+  {key:'web',     label:'Web',            inHint:'in-scope domains / URLs (e.g. acme.com)',    outHint:'out-of-scope hosts',    out:true},
+  {key:'api',     label:'API',            inHint:'in-scope API hosts',                          outHint:'out-of-scope hosts',    out:true},
+  {key:'ai',      label:'AI / LLM',       inHint:'in-scope model/chat endpoints',               outHint:'out-of-scope',          out:true},
+  {key:'cloud',   label:'Cloud',          inHint:'in-scope accounts / hosts',                   outHint:'out-of-scope',          out:true},
+  {key:'mobile',  label:'Mobile',         inHint:'APK path / package name',                     out:false},
+  {key:'wireless',label:'Wireless',       inHint:'SSIDs / BSSIDs',                              out:false},
+];
+let SCOPEDATA={};   // key -> {enabled, in:[], out:[]}
+function renderScope(){
+  $('#scopeDomains').innerHTML=SCOPE_DOMAINS.map(d=>{
+    const s=SCOPEDATA[d.key]||{}; const on=!!s.enabled;
+    return `<div class="prow" data-dk="${d.key}" style="grid-template-columns:1fr">
+      <div class="toggle"><input type="checkbox" class="d_on" ${on?'checked':''}> <label style="color:var(--fg)"><b>${d.label}</b></label></div>
+      <div class="d_body ${on?'':'hidden'}" style="display:flex;flex-direction:column;gap:6px">
+        <label class="hint">In scope<textarea class="d_in" rows="2" placeholder="${d.inHint}">${esc((s.in||[]).join(', '))}</textarea></label>
+        ${d.out?`<label class="hint">Out of scope<textarea class="d_out" rows="1" placeholder="${d.outHint}">${esc((s.out||[]).join(', '))}</textarea></label>`:''}
+      </div></div>`;}).join('');
+  $('#scopeDomains').querySelectorAll('.prow').forEach(row=>{
+    const cb=row.querySelector('.d_on');
+    cb.onchange=()=>row.querySelector('.d_body').classList.toggle('hidden',!cb.checked);
+  });
+}
+function collectScope(){
+  const domains={};
+  $('#scopeDomains').querySelectorAll('.prow').forEach(row=>{
+    const key=row.dataset.dk; const enabled=row.querySelector('.d_on').checked;
+    const inv=row.querySelector('.d_in'); const outv=row.querySelector('.d_out');
+    domains[key]={enabled, in:split(inv?inv.value:''), out:split(outv?outv.value:'')};
+  });
+  return {domains};
+}
+async function loadScope(){
+  SCOPEDATA={};
+  if(ENG){ try{
+    const st=await api('/api/scope?eng='+encodeURIComponent(ENG));
+    SCOPEDATA=(st.scope&&st.scope.domains)||{};
+    $('#f_id').value=ENG; $('#f_name').value=st.name||''; $('#f_mode').value=st.mode||'semi';
+  }catch(e){} }
+  renderScope();
+}
 $('#createbtn').onclick=async()=>{
-  const scope={in_scope_domains:split($('#f_dom').value),in_scope_cidrs:split($('#f_cidr').value),out_of_scope:split($('#f_out').value)};
+  const scope=collectScope();
   const r=await api('/api/engagement',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({engagement:$('#f_id').value.trim(),name:$('#f_name').value.trim(),scope,mode:$('#f_mode').value})});
   if(r.error){$('#createmsg').textContent='⚠ '+r.error;return}
-  $('#createmsg').textContent='saved ✓';chat('sys','Engagement <b>'+esc(r.engagement.id)+'</b> created. Scope locked. Send <b>run</b>.');
+  $('#createmsg').textContent='saved ✓';chat('sys','Engagement <b>'+esc(r.engagement.id)+'</b> scope saved. Send <b>run</b>.');
   await refreshEngagements(r.engagement.id);
   $('#settings').classList.add('hidden');
 };
@@ -777,7 +857,7 @@ $('#demobtn').onclick=async()=>{
   chat('sys','Loaded <b>demo</b> engagement (4 seeded assets). Send <b>run full</b> to map → validate → report.');
   await refreshEngagements(r.engagement.id);
 };
-function split(v){return (v||'').split(',').map(x=>x.trim()).filter(Boolean)}
+function split(v){return (v||'').split(/[,\n]/).map(x=>x.trim()).filter(Boolean)}
 
 async function send(){
   const v=$('#chatin').value.trim(); if(!v||!ENG)return; $('#chatin').value='';
@@ -964,7 +1044,7 @@ function renderModelList(models){
 
 function showTab(t){document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('on',x.dataset.tab===t));
   document.querySelectorAll('.panel').forEach(x=>x.classList.toggle('hidden',x.dataset.panel!==t));
-  if(t==='ladder')renderLadder(); if(t==='models')renderModels();}
+  if(t==='ladder')renderLadder(); if(t==='models')renderModels(); if(t==='scope')loadScope();}
 document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>{if(['providers','subs','ollama','ladder','models'].includes(b.dataset.tab))syncFromDom();showTab(b.dataset.tab);});
 $('#lm_prov')&&($('#lm_prov').onchange=fillModelOptions);
 $('#lm_add')&&($('#lm_add').onclick=()=>{

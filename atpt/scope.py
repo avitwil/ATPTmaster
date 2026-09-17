@@ -29,22 +29,31 @@ def in_scope(scope: dict, target: str) -> bool:
     host = _host_of(target)
     if not host:
         return False
-    for d in scope.get("out_of_scope", []) or []:      # explicit deny wins
+    for d in scope.get("out_of_scope", []) or []:      # explicit domain deny wins
         d = _norm(d)
         if host == d or host.endswith("." + d):
             return False
+    ip = None
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    if ip is not None:                                 # explicit IP/CIDR deny wins too
+        for c in scope.get("out_of_scope_cidrs", []) or []:
+            try:
+                if ip in ipaddress.ip_network(c, strict=False):
+                    return False
+            except ValueError:
+                continue
     for d in scope.get("in_scope_domains", []) or []:
         d = _norm(d)
         if host == d or host.endswith("." + d):
             return True
-    try:
-        ip = ipaddress.ip_address(host)
+    if ip is not None:
         for c in scope.get("in_scope_cidrs", []) or []:
             try:
                 if ip in ipaddress.ip_network(c, strict=False):
                     return True
             except ValueError:
                 continue
-    except ValueError:
-        pass
     return False
