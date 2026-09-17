@@ -78,6 +78,9 @@ def _backend_http_api(cfg: dict, prompt: str) -> str:
         if key:
             headers["Authorization"] = f"Bearer {key}"
         body = {"model": cfg.get("model"), "messages": [{"role": "user", "content": prompt}]}
+        effort = cfg.get("effort")
+        if effort and effort not in ("", "none"):
+            body["reasoning_effort"] = effort
     req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers)
     with urllib.request.urlopen(req, timeout=cfg.get("timeout", 120)) as resp:
         return _extract_text(json.loads(resp.read().decode()))
@@ -109,6 +112,7 @@ class ReasoningLadder:
         cfg = config or {}
         self.providers: dict = cfg.get("providers", {})
         self.preference: list = cfg.get("preference", [])
+        self.ladder: list = cfg.get("ladder") or []   # [{provider, model, effort}]
         self.policy: dict = cfg.get("policy", {})
         self._emit = emit or (lambda *a, **k: None)
 
@@ -118,21 +122,36 @@ class ReasoningLadder:
             return provider_cfg.get("backend") == "ollama"
         return True  # "any" / "hosted_ok" / unknown -> permit
 
+    def _entries(self):
+        """Yield (provider, model_override, effort). Prefer the model-based ladder;
+        fall back to the plain provider preference list for older configs."""
+        if self.ladder:
+            for e in self.ladder:
+                yield e.get("provider"), e.get("model"), e.get("effort")
+        else:
+            for name in self.preference:
+                yield name, None, None
+
     def reason(self, prompt: str, phase: str) -> "ReasoningResult | None":
-        for name in self.preference:
-            pc = self.providers.get(name)
+        for provider, model, effort in self._entries():
+            pc = self.providers.get(provider)
             if not pc or not self._allowed(pc, phase):
                 continue
             backend = BACKENDS.get(pc.get("backend"))
             if backend is None:
                 continue
+            cfg = dict(pc)                       # per-entry model/effort override
+            if model:
+                cfg["model"] = model
+            if effort:
+                cfg["effort"] = effort
             try:
-                text = backend(pc, prompt)
+                text = backend(cfg, prompt)
             except Exception as exc:
-                self._emit("reasoning_error", f"provider '{name}' error: {exc}", "warn")
+                self._emit("reasoning_error", f"provider '{provider}' error: {exc}", "warn")
                 continue
             if _is_refusal(text):
-                self._emit("reasoning_refused", f"provider '{name}' refused; advancing", "info")
+                self._emit("reasoning_refused", f"provider '{provider}' refused; advancing", "info")
                 continue
-            return ReasoningResult(text=text, provider=name)
+            return ReasoningResult(text=text, provider=provider)
         return None

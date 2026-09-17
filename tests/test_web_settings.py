@@ -140,6 +140,25 @@ class WebSettingsTest(unittest.TestCase):
         st, _, _, _ = self._post("/api/mode", {"mode": "yolo"}, eng="htb1")
         self.assertEqual(st, 400)
 
+    # --- live models --------------------------------------------------------
+    def test_models_unknown_provider_400(self):
+        st, _, body, _ = self._get("/api/models", provider="nope")
+        self.assertEqual(st, 400)
+
+    def test_models_uses_configured_provider(self):
+        # configure an ollama provider, then stub the fetch to avoid real network
+        self._post("/api/settings", {"reasoning": {"providers": {
+            "loc": {"backend": "ollama", "model": "llama3.1"}}, "preference": ["loc"]}})
+        from atpt import models
+        orig = models.list_models
+        models.list_models = lambda cfg: (["llama3.1", "qwen2"], None)
+        try:
+            st, _, body, _ = self._get("/api/models", provider="loc")
+        finally:
+            models.list_models = orig
+        self.assertEqual(st, 200)
+        self.assertEqual(json.loads(body)["models"], ["llama3.1", "qwen2"])
+
     def test_user_info_saved_and_redacted_get_ok(self):
         self._post("/api/settings", {"user_info": {"name": "Avi", "email": "a@b.co",
                                                    "company": "Acme", "phone": "123"}})

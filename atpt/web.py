@@ -15,7 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
-from . import privilege, providers
+from . import models, privilege, providers
 from .engine import Orchestrator
 from .registry import discover
 from .state import SQLiteStore
@@ -192,6 +192,8 @@ class WebApp:
         if path == "/api/providers/status" and method == "GET":
             return self._json(200, {"providers": [
                 {"name": n, **providers.status(n)} for n in providers.known()]})
+        if path == "/api/models" and method == "GET":
+            return self._list_models(query)
         if path == "/api/providers/install" and method == "POST":
             return self._provider_install(data)
         if path == "/api/providers/login" and method == "POST":
@@ -287,6 +289,18 @@ class WebApp:
         if "sudo_allowed" in patch:
             privilege.set_allowed(bool(patch["sudo_allowed"]))
         return self._json(200, _redact_settings(store.get_settings()))
+
+    def _list_models(self, query):
+        """Live model list for one configured provider. Reads the raw provider
+        config server-side (including any stored key) to make the request; the key
+        is never returned. `provider` is the reasoning-provider name."""
+        name = (query.get("provider") or "").strip()
+        provs = (self._store().get_settings().get("reasoning") or {}).get("providers", {})
+        cfg = provs.get(name)
+        if not cfg:
+            return self._json(400, {"error": f"no configured provider '{name}'"})
+        model_ids, err = models.list_models(cfg)
+        return self._json(200, {"provider": name, "models": model_ids, "error": err})
 
     def _provider_install(self, data):
         """Autonomous install: deps (Node/npm) + the CLI, all under sudo. The only
@@ -607,7 +621,8 @@ pre.out{background:var(--field);border:1px solid var(--edge);border-radius:6px;p
           <button class="ghost" id="addOllama">+ Add local model</button>
         </div>
         <div class="panel hidden" data-panel="models">
-          <div class="hint">The available models for each configured provider will be listed here (fetched live from the provider) in the next update.</div>
+          <div class="hint">Live models for each configured provider (fetched from the provider — needs its key/CLI configured). Save your providers first.</div>
+          <div id="modelsList"></div>
         </div>
         <div class="panel hidden" data-panel="scope">
           <div class="hint">Define the engagement target and scope. <span class="muted">(Domain-typed scope — Infra / Web / Mobile / AI — with per-domain rules is coming next.)</span></div>
@@ -662,9 +677,16 @@ pre.out{background:var(--field);border:1px solid var(--edge);border-radius:6px;p
           </div>
         </div>
         <div class="panel hidden" data-panel="ladder">
-          <div class="hint">Try providers top-to-bottom; fall back on error/refusal. Policy limits which run per phase.</div>
+          <div class="hint">Ordered models tried top-to-bottom; fall back on error/refusal. Add a model (from those configured in AI settings) with an effort level.</div>
           <ul class="ladder" id="ladder"></ul>
-          <div class="prow" style="grid-template-columns:1fr 1fr 1fr">
+          <div class="prow" style="grid-template-columns:1fr 1fr auto auto;align-items:end">
+            <label>Provider<select id="lm_prov"></select></label>
+            <label>Model<select id="lm_model"></select></label>
+            <label>Effort<select id="lm_effort"><option value="">effort —</option><option>minimal</option><option>low</option><option>medium</option><option>high</option></select></label>
+            <button class="ghost" id="lm_add">+ Add model</button>
+          </div>
+          <span class="hint" id="lm_hint"></span>
+          <div class="prow" style="grid-template-columns:1fr 1fr 1fr;margin-top:6px">
             <label>map policy<select id="pol_map"><option>any</option><option>hosted_ok</option><option>local_only</option></select></label>
             <label>exploit policy<select id="pol_exploit"><option>any</option><option>hosted_ok</option><option>local_only</option></select></label>
             <label>report policy<select id="pol_report"><option>any</option><option>hosted_ok</option><option>local_only</option></select></label>
@@ -778,7 +800,7 @@ function downloadReport(){ if(!ENG){chat('sys','No engagement selected.');return
 $('#engsel').onchange=async()=>{ENG=$('#engsel').value;syncMode();await refreshAll()};
 
 /* ===== Settings ===== */
-let SET={}, HTTP=[], SUB=[], OLLAMA=[], PREF=[], PSTATUS={};
+let SET={}, HTTP=[], SUB=[], OLLAMA=[], PREF=[], PSTATUS={}, MODELS={}, LADDER=[];
 function applyTheme(mode){ // 'system' | 'light' | 'dark'
   const el=document.documentElement;
   if(mode==='light'||mode==='dark') el.setAttribute('data-theme',mode);
@@ -800,11 +822,14 @@ function decompose(){
   // Always surface all known CLIs as default rows (claude, gemini, codex).
   KNOWN.forEach(n=>{ if(!SUB.some(x=>!x.custom&&x.name===n)) SUB.push({name:n,cmd:(PSTATUS[n]||{}).cmd||'',custom:false}); });
   PREF=(r.preference||[]).slice();
+  // Model-based ladder: use it if present, else migrate from the provider preference.
+  LADDER=(r.ladder||[]).map(e=>({provider:e.provider,model:e.model||'',effort:e.effort||''}));
+  if(!LADDER.length && PREF.length) LADDER=PREF.map(n=>({provider:n,model:(provs[n]||{}).model||'',effort:''}));
   const pol=r.policy||{};
   $('#pol_map').value=pol.map||'any';$('#pol_exploit').value=pol.exploit||'any';$('#pol_report').value=pol.report||'any';
 }
 function allNames(){return [...HTTP,...SUB,...OLLAMA].map(p=>p.name).filter(Boolean);}
-function reconcilePref(){const names=allNames();PREF=PREF.filter(n=>names.includes(n));names.forEach(n=>{if(!PREF.includes(n))PREF.push(n);});}
+function reconcileLadder(){const names=allNames();LADDER=LADDER.filter(e=>names.includes(e.provider));}
 
 function httpRow(p,i){return `<div class="prow" data-i="${i}" data-kind="http" style="grid-template-columns:1fr 1fr">
   <label>Name<input class="f_name" value="${esc(p.name)}"></label>
@@ -846,12 +871,28 @@ function renderProviders(){
   wireRows();
 }
 function renderLadder(){
-  reconcilePref();
-  $('#ladder').innerHTML=PREF.map((n,i)=>`<li data-n="${esc(n)}"><span class="nm">${i+1}. ${esc(n)}</span>
-    <button class="ghost l_up" ${i===0?'disabled':''}>↑</button>
-    <button class="ghost l_down" ${i===PREF.length-1?'disabled':''}>↓</button></li>`).join('')||'<div class=hint>Add providers first.</div>';
-  $('#ladder').querySelectorAll('.l_up').forEach((b,idx)=>{const li=b.closest('li');b.onclick=()=>{const i=PREF.indexOf(li.dataset.n);if(i>0){[PREF[i-1],PREF[i]]=[PREF[i],PREF[i-1]];renderLadder();}};});
-  $('#ladder').querySelectorAll('.l_down').forEach(b=>{const li=b.closest('li');b.onclick=()=>{const i=PREF.indexOf(li.dataset.n);if(i<PREF.length-1){[PREF[i+1],PREF[i]]=[PREF[i],PREF[i+1]];renderLadder();}};});
+  reconcileLadder();
+  $('#ladder').innerHTML=LADDER.map((e,i)=>`<li><span class="nm">${i+1}. <b>${esc(e.provider)}</b>${e.model?' · '+esc(e.model):''}${e.effort?' <span class="badge">'+esc(e.effort)+'</span>':''}</span>
+    <button class="ghost l_up" data-i="${i}" ${i===0?'disabled':''}>↑</button>
+    <button class="ghost l_down" data-i="${i}" ${i===LADDER.length-1?'disabled':''}>↓</button>
+    <button class="ghost l_del" data-i="${i}">✕</button></li>`).join('')||'<div class=hint>No models in the ladder yet — add one below.</div>';
+  const mv=(i,j)=>{[LADDER[i],LADDER[j]]=[LADDER[j],LADDER[i]];renderLadder();};
+  $('#ladder').querySelectorAll('.l_up').forEach(b=>b.onclick=()=>mv(+b.dataset.i,+b.dataset.i-1));
+  $('#ladder').querySelectorAll('.l_down').forEach(b=>b.onclick=()=>mv(+b.dataset.i,+b.dataset.i+1));
+  $('#ladder').querySelectorAll('.l_del').forEach(b=>b.onclick=()=>{LADDER.splice(+b.dataset.i,1);renderLadder();});
+  // populate the provider picker from configured providers
+  const names=allNames();
+  $('#lm_prov').innerHTML=names.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join('')||'<option value="">(configure a provider first)</option>';
+  fillModelOptions();
+}
+function fillModelOptions(){
+  const prov=$('#lm_prov').value; const list=MODELS[prov];
+  const sub=SUB.find(s=>s.name===prov);
+  if(sub){ // CLI provider: single "model" = its command, no live list
+    $('#lm_model').innerHTML='<option value="">(CLI — uses its command)</option>'; return;
+  }
+  if(!list){ $('#lm_model').innerHTML='<option value="">— fetch in Models tab —</option>'; return; }
+  $('#lm_model').innerHTML=list.map(m=>`<option value="${esc(m)}">${esc(m)}</option>`).join('')||'<option value="">(none returned)</option>';
 }
 function syncFromDom(){
   const rd=(row,cls)=>{const e=row.querySelector(cls);return e?e.value.trim():'';};
@@ -892,10 +933,45 @@ function wireRows(){
 }
 async function loadStatuses(){const r=await api('/api/providers/status');PSTATUS={};(r.providers||[]).forEach(p=>PSTATUS[p.name]=p);}
 
+/* ---- live model lists ---- */
+async function fetchModels(prov,btn){
+  if(btn){btn.disabled=true;btn.textContent='fetching…';}
+  const r=await api('/api/models?provider='+encodeURIComponent(prov));
+  if(btn){btn.disabled=false;btn.textContent='Fetch models';}
+  if(r.error && (!r.models||!r.models.length)){ MODELS[prov]=MODELS[prov]||[]; return {error:r.error}; }
+  MODELS[prov]=r.models||[]; return {models:MODELS[prov]};
+}
+function renderModels(){
+  // only hosted/local providers expose a model list (not CLI)
+  const list=[...HTTP.map(p=>({name:p.name,kind:'API · '+p.api})),...OLLAMA.map(p=>({name:p.name,kind:'Ollama'}))].filter(p=>p.name);
+  if(!list.length){$('#modelsList').innerHTML='<div class=hint>Configure an API or Ollama provider first (AI settings → providers), then Save.</div>';return;}
+  $('#modelsList').innerHTML=list.map(p=>`<div class="prow" data-prov="${esc(p.name)}" style="grid-template-columns:1fr auto">
+    <div><b>${esc(p.name)}</b> <span class=hint>${esc(p.kind)}</span></div>
+    <button class="ghost m_fetch">Fetch models</button>
+    <div class="full m_out">${MODELS[p.name]?renderModelList(MODELS[p.name]):'<span class=hint>not fetched yet</span>'}</div>
+  </div>`).join('');
+  $('#modelsList').querySelectorAll('.m_fetch').forEach(b=>b.onclick=async()=>{
+    const row=b.closest('.prow'); const prov=row.dataset.prov; const out=row.querySelector('.m_out');
+    out.innerHTML='<span class=hint>fetching…</span>';
+    const r=await fetchModels(prov,b);
+    out.innerHTML=r.error?('<span class=warn>⚠ '+esc(r.error)+'</span>'):renderModelList(r.models);
+  });
+}
+function renderModelList(models){
+  if(!models||!models.length)return '<span class=hint>(none returned)</span>';
+  return '<div class=hint>'+models.length+' models</div>'+models.map(m=>`<span class="badge" style="margin:2px 4px 0 0">${esc(m)}</span>`).join('');
+}
+
 function showTab(t){document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('on',x.dataset.tab===t));
   document.querySelectorAll('.panel').forEach(x=>x.classList.toggle('hidden',x.dataset.panel!==t));
-  if(t==='ladder')renderLadder();}
-document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>{if(['providers','subs','ollama','ladder'].includes(b.dataset.tab))syncFromDom();showTab(b.dataset.tab);});
+  if(t==='ladder')renderLadder(); if(t==='models')renderModels();}
+document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>{if(['providers','subs','ollama','ladder','models'].includes(b.dataset.tab))syncFromDom();showTab(b.dataset.tab);});
+$('#lm_prov')&&($('#lm_prov').onchange=fillModelOptions);
+$('#lm_add')&&($('#lm_add').onclick=()=>{
+  const prov=$('#lm_prov').value; if(!prov){$('#lm_hint').textContent='configure a provider first';return;}
+  LADDER.push({provider:prov,model:$('#lm_model').value||'',effort:$('#lm_effort').value||''});
+  $('#lm_hint').textContent=''; renderLadder();
+});
 
 async function openSettings(tab){
   SET=await api('/api/settings');
@@ -921,8 +997,9 @@ function providersMap(){
   return m;
 }
 $('#setsave').onclick=async()=>{
-  syncFromDom();reconcilePref();
-  const reasoning={providers:providersMap(),preference:PREF,
+  syncFromDom();reconcileLadder();
+  const pref=[]; LADDER.forEach(e=>{if(!pref.includes(e.provider))pref.push(e.provider);});  // compat
+  const reasoning={providers:providersMap(),ladder:LADDER,preference:pref,
     policy:{map:$('#pol_map').value,exploit:$('#pol_exploit').value,report:$('#pol_report').value}};
   const name=$('#ui_name').value.trim();
   const user_info={name,company:$('#ui_company').value.trim(),phone:$('#ui_phone').value.trim(),email:$('#ui_email').value.trim()};
