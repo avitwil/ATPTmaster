@@ -4,6 +4,7 @@ APB is imported lazily so unit tests can fake it."""
 from __future__ import annotations
 import json
 import os
+import re
 import paramiko
 
 from .actions import Action
@@ -12,6 +13,15 @@ from .agent import Executor, Observation, run_episode
 DEFAULT_APB_ROOT = "/home/avi/Projects/benchmarks/auto-pen-bench"
 LOCAL_JUDGE_MODEL = "qwen2.5:7b"
 LOCAL_JUDGE_BASE = "http://localhost:11434/v1"
+
+# APB's RemoteShell returns the interactive shell's raw output, including ANSI
+# colour codes and bracketed-paste markers (\x1b[?2004h). Strip them so the
+# agent (and the milestone judge) see clean text and don't waste tokens.
+_ANSI_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+
+
+def _clean_obs(text: str) -> str:
+    return _ANSI_RE.sub("", text or "")
 
 
 def load_tasks(apb_root: str = DEFAULT_APB_ROOT, limit=None) -> list:
@@ -31,8 +41,13 @@ def make_local_evaluator(command_ms, stage_ms):
     from autopenbench.evaluation import Evaluator
     ev = Evaluator(api_key="ollama", command_milestones=command_ms,
                    stage_milestones=stage_ms)
+    # JSON mode, not the default TOOLS/function-calling mode: a small local model
+    # (qwen2.5:7b) served via Ollama's OpenAI endpoint cannot reliably emit tool
+    # calls (instructor errors "No tool calls found"), but it can return a JSON
+    # object matching the response schema.
     ev.evaluator = instructor.from_openai(
-        OpenAI(base_url=LOCAL_JUDGE_BASE, api_key="ollama"))
+        OpenAI(base_url=LOCAL_JUDGE_BASE, api_key="ollama"),
+        mode=instructor.Mode.JSON)
     ev.model = LOCAL_JUDGE_MODEL
     return ev
 
@@ -71,7 +86,7 @@ class APBExecutor(Executor):
         if action.tool == "execute_bash":
             out = ExecuteBash(machine_ipaddr=a.get("machine_ipaddr", "192.168.0.5"),
                               cmd=a.get("cmd", "")).run(self._shell_for(a.get("machine_ipaddr", "192.168.0.5")))
-            return Observation(text=str(out))
+            return Observation(text=_clean_obs(str(out)))
         if action.tool == "ssh_connect":
             ip = a.get("machine_ipaddr", "192.168.0.5")
             tool = SSHConnect(ssh_ipaddr=ip,
@@ -90,7 +105,7 @@ class APBExecutor(Executor):
                     self.driver.remotes[ip] = RemoteShell(shell_or_client)
                 except Exception:
                     pass
-            return Observation(text=str(msg))
+            return Observation(text=_clean_obs(str(msg)))
         if action.tool == "write_file":
             out = WriteFile(
                 content=a.get("content", ""),

@@ -75,5 +75,22 @@ class ExecutorMapping(unittest.TestCase):
         self.assertFalse(obs.done)
 
 
+class CleanObservation(unittest.TestCase):
+    def test_strips_ansi_and_bracketed_paste(self):
+        _install_fake_apb()
+        from bench import autopenbench_runner as A
+        raw = "\x1b[?2004l\x1b[36mlo\x1b[0m  UP 192.168.0.5\x1b[?2004h\r\nroot@kali:~# "
+        out = A._clean_obs(raw)
+        self.assertNotIn("\x1b", out)          # no escape sequences remain
+        self.assertNotIn("[?2004", out)        # bracketed-paste markers gone
+        self.assertIn("lo", out)               # real content preserved
+        self.assertIn("UP 192.168.0.5", out)
+
+    def test_none_safe(self):
+        _install_fake_apb()
+        from bench import autopenbench_runner as A
+        self.assertEqual(A._clean_obs(None), "")
+
+
 if __name__ == "__main__":
     unittest.main()
