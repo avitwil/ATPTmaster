@@ -11,6 +11,7 @@ import subprocess
 from pathlib import Path
 
 from atpt.module import Module, ModuleResult
+from atpt.config import offensive_agent_on
 
 
 def _scan_targets(scope) -> list:
@@ -105,6 +106,8 @@ class ReconNebula(Module):
         return [f"recon_nebula: exec {self._command(ctx)}"]
 
     def run(self, ctx) -> ModuleResult:
+        if offensive_agent_on(ctx.engagement):
+            return ModuleResult(ok=True, summary="skipped: offensive agent is the active engine")
         # No concrete host in scope -> the runner would die "no --target provided"
         # (exit 2). Say so plainly instead, so the operator knows to add a target
         # IP/domain rather than seeing a cryptic recon failure.

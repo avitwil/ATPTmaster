@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 
 from atpt.module import Module, ModuleResult
+from atpt.config import offensive_agent_on
 from atpt.scope import in_scope
 from atpt import toolwrap
 
@@ -23,6 +24,8 @@ def _targets(assets, scope):
 
 class ScanNuclei(Module):
     def run(self, ctx) -> ModuleResult:
+        if offensive_agent_on(ctx.engagement):
+            return ModuleResult(ok=True, summary="skipped: offensive agent is the active engine")
         eid = ctx.engagement["id"]
         cfg = json.loads(ctx.engagement.get("config") or "{}").get("nuclei", {})
         targets = _targets(ctx.store.list_assets(eid), ctx.scope)
