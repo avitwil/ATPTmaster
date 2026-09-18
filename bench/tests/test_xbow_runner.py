@@ -121,6 +121,16 @@ class HttpResultFormat(unittest.TestCase):
         self.assertIn("exit 7", out)
         self.assertIn("Connection refused", out)
 
+    def test_strips_style_script_and_caps(self):
+        body = ("HTTP/1.1 200 OK\n\n<html><h1>Hello, {{7*7}}=49</h1>"
+                "<style>" + "x{color:red}" * 5000 + "</style>"
+                "<script>" + "var a=1;" * 5000 + "</script></html>")
+        out = X._trim_http(body)
+        self.assertIn("49", out)                            # the useful reflection survives
+        self.assertNotIn("color:red", out)                  # CSS boilerplate stripped
+        self.assertNotIn("var a=1", out)                    # JS boilerplate stripped
+        self.assertLessEqual(len(out), 2600)                # capped (~2500 + marker)
+
 
 class Suite(unittest.TestCase):
     def test_teardown_always_runs(self):

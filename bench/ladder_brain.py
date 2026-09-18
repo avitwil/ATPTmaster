@@ -14,7 +14,9 @@ _PROVIDERS = {
     "opus": lambda claude_path: {
         "backend": "cli",
         "cmd": f"{claude_path or shutil.which('claude') or 'claude'} -p",
-        "model": "opus", "model_flag": "--model", "timeout": 180,
+        # 300s: large pentest transcripts make `claude -p` slow; 180s timed out
+        # mid-run and dropped the whole episode to no_reasoner.
+        "model": "opus", "model_flag": "--model", "timeout": 300,
     },
     "deephat": lambda _cp: {
         "backend": "ollama", "model": DEEPHAT_MODEL,

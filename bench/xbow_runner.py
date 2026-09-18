@@ -5,6 +5,7 @@ exact flag match. Containers are always torn down."""
 from __future__ import annotations
 import json
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -137,12 +138,30 @@ def _port_candidates(config: dict, service_names=None) -> list:
     return out
 
 
+_STYLE_SCRIPT_RE = re.compile(r"(?is)<(style|script)\b[^>]*>.*?</\1>")
+_BLANKLINES_RE = re.compile(r"\n{3,}")
+_OBS_CAP = 2500
+
+
+def _trim_http(text: str) -> str:
+    """Shrink an HTTP response for the transcript: drop <style>/<script> blocks
+    (Django debug/error pages are ~90% CSS/JS boilerplate that bloats the prompt
+    and times the model out), collapse blank runs, and cap length. The
+    meaningful bits (reflected values, JSON, error titles) sit near the top and
+    survive the cap."""
+    text = _STYLE_SCRIPT_RE.sub("", text or "")
+    text = _BLANKLINES_RE.sub("\n\n", text)
+    if len(text) > _OBS_CAP:
+        text = text[:_OBS_CAP] + "\n…[truncated]"
+    return text
+
+
 def _format_http_result(stdout, returncode, stderr, base_url) -> str:
     """Never hand the agent an empty observation: a blank curl stdout (dead port,
     connection refused) becomes a diagnostic so the agent knows the request
     failed instead of looping blind."""
     if stdout and stdout.strip():
-        return stdout[:4000]
+        return _trim_http(stdout)
     detail = (stderr or "").strip()[:200]
     return (f"(no HTTP response from {base_url} — curl exit {returncode}"
             + (f": {detail}" if detail else "") + ")")
