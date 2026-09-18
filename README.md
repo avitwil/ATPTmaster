@@ -114,6 +114,32 @@ Everything is configured in the menu — no JSON editing:
 Provider / model / user / sudo settings are global; scope, CTF and report settings
 attach to the selected engagement.
 
+## LLM offensive agent (opt-in)
+
+Instead of the fixed scan chain, you can let the LLM **drive the scan/exploit loop
+per target** — it proposes one command at a time, reads the output, and decides
+the next, adapting to what it finds. Enable it in **☰ → Scope → CTF / engagement →
+LLM offensive agent** (per engagement).
+
+It is supervised so it can **never leave scope**:
+
+- **Startup confirmation.** Before it acts, in *every* mode, it shows you the exact
+  in-scope targets and waits for your OK — so a typo in the target can't turn into
+  scanning the wrong host.
+- **Deterministic scope wall.** Every command it proposes is parsed for its target
+  and must pass the scope oracle, in `semi` **and** `full`. `full` means no per-step
+  human — never "no scope wall." An out-of-scope command is blocked and fed back as
+  an observation, and the agent proposes a different in-scope action.
+- **Read-only by default.** The allowed tools default to enumeration (nmap, curl,
+  gobuster, nuclei, …); exploit tools (sqlmap, hydra, …) are opt-in per engagement.
+  Write/egress flags are denied regardless.
+- **Bounded + stoppable.** A step budget limits the run; **Stop** halts it (and
+  disconnects the VPN).
+
+Discovered services and issues flow into the same map → validate → **PTES report**
+pipeline. See the design in
+[`docs/superpowers/specs/2026-09-18-llm-driven-offensive-agent-design.md`](docs/superpowers/specs/2026-09-18-llm-driven-offensive-agent-design.md).
+
 ## Under the hood
 
 The engine, module contract, the 11 shipped capability modules (recon → map →

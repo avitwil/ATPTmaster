@@ -652,6 +652,7 @@ class WebApp:
         cfg = json.loads(store.get_engagement(eid).get("config") or "{}")
         ctf = dict(cfg.get("ctf") or {})
         ctf["attackbox_has_password"] = privilege.has_attackbox_password(eid)
+        ctf["offensive_agent"] = cfg.get("offensive_agent") or {}
         return ctf
 
     def _save_ctf(self, store, eid, data):
@@ -678,6 +679,17 @@ class WebApp:
             patch["attackbox"] = box                       # NOTE: password excluded from storage
             privilege.set_attackbox_password(eid, pw)       # kept in memory only
         store.update_engagement_config(eid, {"ctf": patch})
+        if "offensive_agent" in data:
+            # Stored at config top-level (not under ctf) — this is what
+            # offensive_agent_on() and the engine read.
+            oa = data.get("offensive_agent") or {}
+            agent = {"enabled": bool(oa.get("enabled"))}
+            if oa.get("max_steps"):
+                agent["max_steps"] = int(oa["max_steps"])
+            bins = [str(b).strip() for b in (oa.get("allow_bins") or []) if str(b).strip()]
+            if bins:
+                agent["allow_bins"] = bins
+            store.update_engagement_config(eid, {"offensive_agent": agent})
         return self._json(200, self._get_ctf(store, eid))
 
     def _chat(self, store, eid, message):
@@ -964,6 +976,12 @@ pre.out{background:var(--field);border:1px solid var(--edge);border-radius:6px;p
         <div class="panel hidden" data-panel="ctf">
           <div class="hint" id="ctfEng">Applies to the selected engagement.</div>
           <label class="hint full">Goals — what the LLM should look for<textarea id="c_goals" rows="3" placeholder="e.g. find user.txt and root.txt; enumerate web + SSH"></textarea></label>
+          <div class="toggle full"><input type="checkbox" id="c_agent">
+            <label for="c_agent"><b>LLM offensive agent</b> — let the AI drive scan/exploit commands per target
+            (scope-enforced in every mode; you confirm targets before it runs)</label></div>
+          <div class="row" id="c_agent_opts">
+            <label class="hint">Max steps<input id="c_agent_steps" type="number" min="1" value="20" style="width:90px"></label>
+            <label class="hint" style="flex:1">Extra allowed tools (comma-sep, opt-in)<input id="c_agent_bins" placeholder="sqlmap, hydra"></label></div>
           <label class="hint full">VPN config (.ovpn)
             <div class="row"><input id="c_vpn" readonly placeholder="none selected" style="flex:1">
               <input type="file" id="c_vpn_file" accept=".ovpn,.conf" hidden>
@@ -1523,13 +1541,17 @@ async function loadCtf(){
   $('#c_goals').value=c.goals||'';$('#c_vpn').value=c.vpn_config_path||'';
   const ab=c.attackbox||{};$('#c_ab_host').value=ab.host||'';$('#c_ab_user').value=ab.user||'';$('#c_ab_key').value=ab.key_path||'';
   $('#c_ab_pw').placeholder=c.attackbox_has_password?'•••••• set this session':'••••••••';
+  const oa=c.offensive_agent||{};$('#c_agent').checked=!!oa.enabled;
+  $('#c_agent_steps').value=oa.max_steps||20;$('#c_agent_bins').value=(oa.allow_bins||[]).join(', ');
   vpnStatus();
 }
 $('#ctfSave').onclick=async()=>{
   if(!ENG){$('#ctfMsg').textContent='no engagement selected';return;}
   const body={goals:$('#c_goals').value,vpn_config_path:$('#c_vpn').value.trim(),
     attackbox:{host:$('#c_ab_host').value.trim(),user:$('#c_ab_user').value.trim(),
-               password:$('#c_ab_pw').value,key_path:$('#c_ab_key').value.trim()}};
+               password:$('#c_ab_pw').value,key_path:$('#c_ab_key').value.trim()},
+    offensive_agent:{enabled:$('#c_agent').checked,max_steps:parseInt($('#c_agent_steps').value)||20,
+      allow_bins:$('#c_agent_bins').value.split(',').map(s=>s.trim()).filter(Boolean)}};
   const r=await api('/api/settings/ctf?eng='+encodeURIComponent(ENG),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   if(r.error){$('#ctfMsg').textContent='⚠ '+r.error;return;}
   $('#c_ab_pw').value='';$('#ctfMsg').textContent='Saved ✓';setTimeout(()=>$('#ctfMsg').textContent='',1500);

@@ -98,6 +98,20 @@ class WebSettingsTest(unittest.TestCase):
         self.assertEqual(ctf["goals"], "get user+root flags")
         self.assertEqual(ctf["vpn_config_path"], "/tmp/a.ovpn")
 
+    def test_offensive_agent_toggle_roundtrip(self):
+        self._mk_eng()
+        st, _, _, _ = self._post("/api/settings/ctf",
+                                 {"offensive_agent": {"enabled": True, "max_steps": 12}},
+                                 eng="htb1")
+        self.assertEqual(st, 200)
+        _, _, body, _ = self._get("/api/settings/ctf", eng="htb1")
+        oa = json.loads(body)["offensive_agent"]
+        self.assertTrue(oa["enabled"])
+        self.assertEqual(oa["max_steps"], 12)
+        # and it is stored where the engine reads it (config.offensive_agent)
+        from atpt.config import offensive_agent_on
+        self.assertTrue(offensive_agent_on(SQLiteStore(self.dbpath).get_engagement("htb1")))
+
     def test_ctf_attackbox_password_not_persisted(self):
         self._mk_eng()
         self._post("/api/settings/ctf",
