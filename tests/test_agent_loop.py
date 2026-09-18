@@ -176,5 +176,49 @@ class LoopToolboxInjectTest(unittest.TestCase):
         self.assertFalse(any("LEARNED PLAYBOOK" in p for p in prompts))
 
 
+class LoopToolboxSaveTest(unittest.TestCase):
+    def test_saves_skill_on_success(self):
+        tmp = TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        tb = Toolbox(Path(tmp.name) / "toolbox")
+        scripted = iter([
+            '{"command":["curl","http://10.1.1.5/"]}',   # produces a flag finding via harvest
+            '{"done": true}',
+        ])
+
+        def hv(argv, res):
+            return ([], [{"title": "Flag captured: flag{x}", "severity": "critical",
+                          "status": "validated", "evidence": {"flag": "flag{x}"}}])
+
+        skill = {"name": "curl-flag", "applies_to": {"service_tags": ["http"]},
+                 "steps": [{"command": ["curl", "http://{TARGET}/"]}],
+                 "success_note": "flag on /"}
+
+        run_loop(goal="capture the flag", guard=guard(), scope=SCOPE,
+                 reason_fn=lambda p: next(scripted), max_steps=4,
+                 emit=lambda *a, **k: None,
+                 execute_fn=lambda argv, timeout=300: {"rc": 0, "out": "", "err": ""},
+                 harvest_fn=hv, toolbox=tb, distill_fn=lambda g, t: skill)
+        self.assertEqual([s["name"] for s in tb.list_skills()], ["curl-flag"])
+
+    def test_no_save_without_findings(self):
+        tmp = TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        tb = Toolbox(Path(tmp.name) / "toolbox")
+        called = {"n": 0}
+
+        def df(g, t):
+            called["n"] += 1
+            return {"name": "x", "steps": [{"command": ["id"]}]}
+
+        run_loop(goal="x", guard=guard(), scope=SCOPE,
+                 reason_fn=lambda p: '{"done": true}', max_steps=2,
+                 emit=lambda *a, **k: None,
+                 execute_fn=lambda argv, timeout=300: {"rc": 0, "out": "", "err": ""},
+                 harvest_fn=lambda a, r: ([], []), toolbox=tb, distill_fn=df)
+        self.assertEqual(called["n"], 0)
+        self.assertEqual(tb.list_skills(), [])
+
+
 if __name__ == "__main__":
     unittest.main()

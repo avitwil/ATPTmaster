@@ -77,6 +77,21 @@ def run_loop(*, goal, guard, reason_fn, max_steps, emit, execute_fn, harvest_fn,
             playbook = _build_playbook(toolbox.search(_goal_tags(goal), []))
         except Exception:
             playbook = ""
+
+    def _finish(summary):
+        if toolbox is not None and distill_fn is not None and findings:
+            try:
+                skill = distill_fn(goal, "\n".join(transcript))
+                if skill:
+                    p = toolbox.save(skill)
+                    if p:
+                        emit("agent_skill_saved",
+                             f"[agent] learned skill '{skill.get('name')}' -> {p.name}",
+                             data={"skill": skill.get("name")})
+            except Exception as e:
+                emit("agent_skill_error", f"[agent] skill distill failed: {e}", level="warn")
+        return assets, findings, summary
+
     reasoner_failures = 0
     for step in range(1, max_steps + 1):
         if halt_fn():
@@ -95,7 +110,7 @@ def run_loop(*, goal, guard, reason_fn, max_steps, emit, execute_fn, harvest_fn,
         if not text:
             reasoner_failures += 1
             if reasoner_failures >= 2:
-                return assets, findings, "agent_no_reasoner: reasoning ladder returned nothing"
+                return _finish("agent_no_reasoner: reasoning ladder returned nothing")
             continue
         reasoner_failures = 0
         action = parse_action(text)
@@ -104,7 +119,7 @@ def run_loop(*, goal, guard, reason_fn, max_steps, emit, execute_fn, harvest_fn,
             continue
 
         if action.kind == "done":
-            return assets, findings, f"done: {action.rationale or 'goal met'}"
+            return _finish(f"done: {action.rationale or 'goal met'}")
 
         if action.kind == "listen":
             r = sess.start_listener(action.port or 0, scope=scope)
@@ -164,5 +179,5 @@ def run_loop(*, goal, guard, reason_fn, max_steps, emit, execute_fn, harvest_fn,
                           f"OBSERVATION: {blob[:1600]}")
 
     if halt_fn():
-        return assets, findings, "stopped by operator between steps"
-    return assets, findings, f"step budget reached ({max_steps} steps)"
+        return _finish("stopped by operator between steps")
+    return _finish(f"step budget reached ({max_steps} steps)")
