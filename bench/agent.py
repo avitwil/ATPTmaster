@@ -31,7 +31,8 @@ class Executor:                       # interface; runners subclass
     def run(self, action: Action) -> Observation: raise NotImplementedError
 
 
-def run_episode(brain, executor, task_id, goal, *, max_steps=20, emit=None):
+def run_episode(brain, executor, task_id, goal, *, max_steps=20, emit=None,
+                reasoner_retries=2):
     emit = emit or (lambda *a, **k: None)
     tools = executor.tools()
     known = {t["name"] for t in tools}
@@ -42,6 +43,14 @@ def run_episode(brain, executor, task_id, goal, *, max_steps=20, emit=None):
     steps = 0
     for _ in range(max_steps):
         text, provider = brain.think(transcript)
+        tries = 0
+        # A transient reasoner failure (e.g. a slow `claude -p` timing out on one
+        # step) should not discard a whole successful episode — retry the same
+        # step a few times before giving up.
+        while provider is None and tries < reasoner_retries:
+            tries += 1
+            emit("reasoner_retry", f"step {steps + 1}: no reasoner, retry {tries}", "warn")
+            text, provider = brain.think(transcript)
         if provider is None:
             return Episode(task_id, False, steps, providers, "no_reasoner",
                            transcript, time.time() - t0)
