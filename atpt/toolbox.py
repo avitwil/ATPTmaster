@@ -13,6 +13,11 @@ from pathlib import Path
 
 _SLUG = re.compile(r"[^a-z0-9]+")
 _INDEX = "index.db"
+_WORD = re.compile(r"[a-z0-9]{3,}")
+_STOP = frozenset({"the", "and", "for", "with", "from", "into", "that", "this",
+                   "your", "are", "was", "will", "can", "all", "any", "use", "via",
+                   "get", "got", "run", "flag", "flags", "capture", "target",
+                   "host", "box", "machine", "read", "both", "user", "root"})
 
 
 def slugify(name: str) -> str:
@@ -28,6 +33,25 @@ def _norm_tags(v) -> list[str]:
 
 def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def goal_tags(goal: str) -> list[str]:
+    return sorted({w for w in _WORD.findall((goal or "").lower()) if w not in _STOP})
+
+
+def service_tags_from_assets(assets) -> list[str]:
+    tags = set()
+    for a in assets or []:
+        v = a.get("service")
+        if v:
+            tags.add(str(v).strip().lower())
+        if a.get("asset_type") in ("web_endpoint", "web_path"):
+            tags.add("http")
+        for k in ("product", "tech"):
+            pv = a.get(k)
+            if isinstance(pv, str) and pv.strip():
+                tags.add(pv.strip().lower().split()[0].split("/")[0])
+    return sorted(tags)
 
 
 class Toolbox:
@@ -133,3 +157,24 @@ class Toolbox:
             self._index_one(rec, p)
             n += 1
         return n
+
+    def search(self, goal_tags_q, service_tags_q, limit=2) -> list[dict]:
+        gt = set(_norm_tags(goal_tags_q))
+        st = set(_norm_tags(service_tags_q))
+        scored = []
+        for r in self._db().execute("SELECT name,goal_tags,service_tags,updated_at FROM skills"):
+            sg = set((r[1] or "").split())
+            ss = set((r[2] or "").split())
+            score = 2 * len(st & ss) + len(gt & sg)
+            if score > 0:
+                scored.append((score, r[3] or "", r[0]))
+        scored.sort(reverse=True)
+        out = []
+        for _, _, slug in scored[:limit]:
+            p = self.root / f"{slug}.json"
+            if p.exists():
+                try:
+                    out.append(json.loads(p.read_text()))
+                except Exception:
+                    continue
+        return out

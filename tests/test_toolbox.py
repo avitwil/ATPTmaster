@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from atpt.toolbox import Toolbox, slugify
+from atpt.toolbox import Toolbox, slugify, goal_tags, service_tags_from_assets
 
 
 class ToolboxStoreTest(unittest.TestCase):
@@ -60,3 +60,43 @@ class ToolboxStoreTest(unittest.TestCase):
             "steps": [{"command": ["curl", "{TARGET_URL}/?p=../../etc/passwd"], "note": ""}],
             "success_note": "LFI"}))
         self.assertEqual(self.tb.reindex(), 1)
+
+
+class ToolboxRetrievalTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.tb = Toolbox(Path(self._tmp.name) / "toolbox")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_goal_tags_drops_generic_and_short(self):
+        self.assertEqual(goal_tags("Capture the flags on the box"), [])
+        tags = goal_tags("Exploit the Wordpress login")
+        self.assertIn("wordpress", tags)
+        self.assertIn("login", tags)
+        self.assertNotIn("the", tags)
+
+    def test_service_tags_from_assets(self):
+        assets = [{"asset_type": "service", "service": "ssh"},
+                  {"asset_type": "service", "service": "http", "product": "Apache httpd"},
+                  {"asset_type": "web_endpoint", "url": "http://h/"}]
+        tags = service_tags_from_assets(assets)
+        self.assertIn("ssh", tags)
+        self.assertIn("http", tags)
+        self.assertIn("apache", tags)
+
+    def test_search_ranks_service_overlap_highest(self):
+        self.tb.save({"name": "http-sqli", "applies_to": {"goal_tags": [],
+                     "service_tags": ["http", "mysql"]},
+                     "steps": [{"command": ["sqlmap", "-u", "{TARGET_URL}"]}], "success_note": "a"})
+        self.tb.save({"name": "ssh-brute", "applies_to": {"goal_tags": ["login"],
+                     "service_tags": ["ssh"]},
+                     "steps": [{"command": ["hydra", "{TARGET}"]}], "success_note": "b"})
+        hits = self.tb.search(goal_tags_q=["login"], service_tags_q=["http", "mysql"], limit=2)
+        self.assertEqual(hits[0]["name"], "http-sqli")   # 2*2 > 1 (goal 'login')
+
+    def test_search_returns_nothing_on_no_overlap(self):
+        self.tb.save({"name": "ssh-brute", "applies_to": {"service_tags": ["ssh"]},
+                      "steps": [{"command": ["hydra", "{TARGET}"]}]})
+        self.assertEqual(self.tb.search([], ["smb"]), [])
