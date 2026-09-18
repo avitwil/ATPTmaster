@@ -43,3 +43,31 @@ class PipelineTest(unittest.TestCase):
         self.orch.run(self.store.get_engagement("E"), "full", dry_run=True)
         self.assertEqual(self.store.count_findings("E"), 0)
         self.assertFalse((self.pd / "var" / "reports" / "E.md").exists())
+
+
+class FailedModuleNotCompletedTest(unittest.TestCase):
+    """A module that runs but reports ok=False must NOT count as completed, so it
+    re-runs next time instead of wedging the pipeline (the recon exit=2 bug)."""
+
+    def test_ok_false_is_not_marked_completed(self):
+        from atpt.module import Manifest, Module, ModuleResult
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        pd = Path(tmp.name)
+        store = SQLiteStore(pd / "var" / "atpt.db")
+        store.create_engagement("E", "Acme", {"in_scope_cidrs": ["10.0.0.1"]},
+                                "s.json", "full", {})
+
+        class Flaky(Module):
+            manifest = Manifest(id="recon_flaky", name="Flaky", phase="recon",
+                                entrypoint="x", consumes=["target"])
+            def run(self, ctx):
+                return ModuleResult(assets=[], summary="scanner failed", ok=False)
+
+        mod = Flaky(Flaky.manifest, pd)
+        orch = Orchestrator(store, {"recon_flaky": mod}, pd)
+        eng = store.get_engagement("E")
+        orch.run(eng, "full")
+        self.assertNotIn("recon_flaky", store.completed_modules("E"))  # not "done"
+        # still pending -> would run again
+        self.assertIn("recon_flaky", [m.manifest.id for m in orch._pending(eng, "full")])

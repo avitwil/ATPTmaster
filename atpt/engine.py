@@ -120,8 +120,14 @@ class Orchestrator:
                     self.store.upsert_asset(eid, a)
                 for f in res.findings:
                     self.store.upsert_finding(eid, f)
-            self.store.log_module_run(eid, mod.id, mod.manifest.phase,
-                                      "dry" if dry_run else "ok", res.summary, "")
+            # A module that ran without raising but reports ok=False (e.g. recon
+            # whose scanner exited non-zero) must be logged "error", NOT "ok" —
+            # completed_modules counts only "ok", so marking a failed recon "ok"
+            # would keep it "done" forever and wedge the pipeline with 0 assets.
+            ok = getattr(res, "ok", True)
+            status = "dry" if dry_run else ("ok" if ok else "error")
+            self.store.log_module_run(eid, mod.id, mod.manifest.phase, status,
+                                      res.summary, "" if ok else res.summary)
             executed.append(mod.id)
             if mode == "step":
                 break

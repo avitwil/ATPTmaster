@@ -113,14 +113,19 @@ class ReconNebula(Module):
                      "[recon] no scannable target in scope — add a target host/IP "
                      "(or CIDR) to the engagement's in-scope list, then run recon again.",
                      phase="recon", module=self.id, level="warn")
-            return ModuleResult(assets=[], summary="no in-scope target to scan")
+            # ok=False: not a real completion — recon must re-run once a target is added.
+            return ModuleResult(assets=[], summary="no in-scope target to scan", ok=False)
         cmd = self._command(ctx)
         if ctx.dry_run:
             ctx.emit("dry_run", f"[recon] would exec: {cmd}", phase="recon", module=self.id)
             return ModuleResult(planned=[cmd], summary="dry-run: recon planned, no tools executed")
         proc = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         assets = _normalize(proc.stdout)
+        # A non-zero exit is a real recon FAILURE (scope/target/tooling error) — it
+        # must NOT be marked completed, or recon never re-runs and the pipeline is
+        # stuck with 0 assets. exit 0 with 0 assets is a valid "found nothing".
+        ok = proc.returncode == 0
         ctx.emit("recon_done", f"[recon] normalized {len(assets)} assets (exit={proc.returncode})",
-                 phase="recon", module=self.id,
+                 phase="recon", module=self.id, level="info" if ok else "warn",
                  data={"exit": proc.returncode, "stderr_tail": proc.stderr[-500:]})
-        return ModuleResult(assets=assets, summary=f"{len(assets)} assets discovered")
+        return ModuleResult(assets=assets, summary=f"{len(assets)} assets discovered", ok=ok)

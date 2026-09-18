@@ -49,6 +49,8 @@ class ModuleResult:
     findings: list[dict] = field(default_factory=list)
     summary: str = ""
     planned: list[str] = field(default_factory=list)   # dry-run: what it WOULD do
+    ok: bool = True     # False => the module failed; engine must NOT mark it completed
+                        # (else a failed recon is "done" forever and wedges the pipeline)
 
 
 @dataclass
