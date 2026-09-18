@@ -85,17 +85,24 @@ class Compose:
                        capture_output=True, text=True, timeout=180)
 
     def _resolve_target(self, d, env) -> str:
-        # Enumerate services (no PyYAML) and return the first that publishes :80.
-        services = subprocess.run(
+        # Resolve the published host port from each service's REAL container port
+        # (read from `docker compose config`), not a hardcoded :80 — challenges
+        # publish on 80, 8000, 8080, ... and assuming 80 sent curl to a dead port.
+        try:
+            cfg = json.loads(subprocess.run(
+                ["docker", "compose", "config", "--format", "json"], cwd=d, env=env,
+                capture_output=True, text=True, timeout=60).stdout or "{}")
+        except Exception:
+            cfg = {}
+        svc_names = [s.strip() for s in subprocess.run(
             ["docker", "compose", "config", "--services"], cwd=d, env=env,
-            capture_output=True, text=True, timeout=60).stdout.splitlines()
-        for svc in (s.strip() for s in services if s.strip()):
+            capture_output=True, text=True, timeout=60).stdout.splitlines() if s.strip()]
+        for svc, cport in _port_candidates(cfg, svc_names):
             port = subprocess.run(
-                ["docker", "compose", "port", svc, "80"], cwd=d, env=env,
+                ["docker", "compose", "port", svc, cport], cwd=d, env=env,
                 capture_output=True, text=True, timeout=60).stdout.strip()
             if port:
-                host_port = port.rsplit(":", 1)[-1]
-                return f"http://127.0.0.1:{host_port}"
+                return f"http://127.0.0.1:{port.rsplit(':', 1)[-1]}"
         return "http://127.0.0.1:80"
 
     def _wait_ready(self, base_url, timeout=60, interval=3):
@@ -109,6 +116,36 @@ class Compose:
             if code and code != "000":
                 return
             time.sleep(interval)
+
+
+def _port_candidates(config: dict, service_names=None) -> list:
+    """From `docker compose config --format json`, list (service, container_port)
+    pairs to probe for a published host port. Uses each service's declared port
+    targets (so a Django app on 8000 resolves), and falls back to common web
+    ports for the given services when the config declares none."""
+    out = []
+    services = (config or {}).get("services", {}) or {}
+    for svc, sdef in services.items():
+        for p in (sdef.get("ports") or []):
+            tgt = p.get("target") if isinstance(p, dict) else None
+            if tgt:
+                out.append((svc, str(tgt)))
+    if not out and service_names:
+        for svc in service_names:
+            for port in ("80", "8000", "8080", "3000", "5000"):
+                out.append((svc, port))
+    return out
+
+
+def _format_http_result(stdout, returncode, stderr, base_url) -> str:
+    """Never hand the agent an empty observation: a blank curl stdout (dead port,
+    connection refused) becomes a diagnostic so the agent knows the request
+    failed instead of looping blind."""
+    if stdout and stdout.strip():
+        return stdout[:4000]
+    detail = (stderr or "").strip()[:200]
+    return (f"(no HTTP response from {base_url} — curl exit {returncode}"
+            + (f": {detail}" if detail else "") + ")")
 
 
 def _curl_args(base_url, payload, cookie_jar=None) -> list:
@@ -142,9 +179,9 @@ def _real_target_runner(base_url):
 
     def runner(kind, payload):
         if kind == "http":
-            return subprocess.run(_curl_args(base_url, payload, cookie_jar=jar),
-                                  capture_output=True, text=True,
-                                  timeout=60).stdout[:4000]
+            p = subprocess.run(_curl_args(base_url, payload, cookie_jar=jar),
+                               capture_output=True, text=True, timeout=60)
+            return _format_http_result(p.stdout, p.returncode, p.stderr, base_url)
         return "run_bash disabled for XBOW (spec: no host shell)"
     return runner
 
