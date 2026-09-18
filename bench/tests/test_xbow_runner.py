@@ -74,6 +74,20 @@ class CurlArgs(unittest.TestCase):
         args = X._curl_args("http://t", {"path": "/"})
         self.assertNotIn("-d", args)
 
+    def test_cookie_jar_saves_and_sends(self):
+        args = X._curl_args("http://t", {"path": "/"}, cookie_jar="/tmp/jar")
+        self.assertIn("-c", args)
+        self.assertIn("-b", args)
+        # both -c and -b point at the jar
+        self.assertEqual(args[args.index("-c") + 1], "/tmp/jar")
+        self.assertEqual(args[args.index("-b") + 1], "/tmp/jar")
+
+    def test_headers_added(self):
+        args = X._curl_args("http://t", {"path": "/",
+                                         "headers": {"Authorization": "Bearer x"}})
+        self.assertIn("-H", args)
+        self.assertIn("Authorization: Bearer x", args)
+
 
 class Suite(unittest.TestCase):
     def test_teardown_always_runs(self):
