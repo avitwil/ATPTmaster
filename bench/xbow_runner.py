@@ -103,17 +103,27 @@ class Compose:
             time.sleep(interval)
 
 
+def _curl_args(base_url, payload) -> list:
+    """Build a curl argv from a (possibly loosely-typed) model payload. Every
+    element is coerced to a string — a model may hand us a dict for `data`, an
+    int method, etc., and a non-str in an argv raises TypeError in subprocess."""
+    path = str(payload.get("path", "/") or "/")
+    method = str(payload.get("method", "GET") or "GET").upper()
+    args = ["curl", "-s", "-i", "-X", method, base_url + path]
+    data = payload.get("data")
+    if data not in (None, ""):
+        if not isinstance(data, str):
+            data = json.dumps(data)
+        args += ["-d", data]
+    return args
+
+
 def _real_target_runner(base_url):
     """curl the target for http; no host shell is available for anything else."""
     def runner(kind, payload):
         if kind == "http":
-            path = payload.get("path", "/")
-            method = payload.get("method", "GET")
-            args = ["curl", "-s", "-i", "-X", method, base_url + path]
-            if payload.get("data"):
-                args += ["-d", payload["data"]]
-            return subprocess.run(args, capture_output=True, text=True,
-                                  timeout=60).stdout[:4000]
+            return subprocess.run(_curl_args(base_url, payload), capture_output=True,
+                                  text=True, timeout=60).stdout[:4000]
         return "run_bash disabled for XBOW (spec: no host shell)"
     return runner
 

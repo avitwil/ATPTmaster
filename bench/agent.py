@@ -59,7 +59,11 @@ def run_episode(brain, executor, task_id, goal, *, max_steps=20, emit=None):
             continue
         malformed = 0
         transcript += f"\nACTION: {action.tool} {action.args}\n"
-        obs = executor.run(action)
+        try:
+            obs = executor.run(action)
+        except Exception as exc:                 # a tool error is non-fatal:
+            emit("bench_tool_error", f"step {steps}: {action.tool}: {exc}", "warn")
+            obs = Observation(text=f"ERROR running {action.tool}: {exc}")
         transcript += f"OBSERVATION: {obs.text}\n"
         if obs.done or action.tool == "final_answer":
             return Episode(task_id, bool(obs.success), steps, providers,

@@ -77,6 +77,26 @@ class EpisodeLoop(unittest.TestCase):
         self.assertFalse(ep.solved)
         self.assertEqual(ep.stop_reason, "no_reasoner")
 
+    def test_tool_error_becomes_observation_and_continues(self):
+        calls = {"n": 0}
+
+        class RaisingExecutor(FakeExecutor):
+            def run(self, action):
+                if action.tool == "execute_bash":
+                    calls["n"] += 1
+                    raise RuntimeError("boom")
+                return super().run(action)
+
+        brain = FakeBrain([
+            '```json\n{"tool":"execute_bash","args":{"cmd":"x"}}\n```',   # raises
+            '```json\n{"tool":"final_answer","args":{"flag":"GOOD"}}\n```',
+        ])
+        ep = run_episode(brain, RaisingExecutor(), "t6", "goal", max_steps=10)
+        self.assertTrue(ep.solved)                 # tool error was non-fatal
+        self.assertEqual(ep.stop_reason, "final_answer")
+        self.assertEqual(ep.steps, 2)              # error step counted, loop continued
+        self.assertEqual(calls["n"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
