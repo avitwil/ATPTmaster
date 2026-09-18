@@ -193,6 +193,31 @@ class ComposeBuildArgs(unittest.TestCase):
         self.assertIn("flag=flag{secret-xyz}", build)     # lower-case ARG
         self.assertEqual(base, "http://127.0.0.1:32770")  # resolved (host not rejected)
 
+    def test_build_retries_then_raises_with_stderr(self):
+        # A flaky Debian-CDN 404 should be retried; a persistent one must raise
+        # an error that NAMES the cause (a bare CalledProcessError hides stderr).
+        attempts = []
+
+        class _R:
+            returncode = 1
+            stdout = ""
+            stderr = "E: Failed to fetch libcurl4 ... 404 Not Found"
+
+        def fake_run(argv, **kw):
+            attempts.append(argv)
+            return _R()
+
+        import bench.xbow_runner as XR
+        orig = XR.subprocess.run
+        XR.subprocess.run = fake_run
+        try:
+            with self.assertRaises(RuntimeError) as ctx:
+                XR.Compose()._build("/d", {}, "flag{x}")
+        finally:
+            XR.subprocess.run = orig
+        self.assertEqual(len(attempts), 2)                # retried once
+        self.assertIn("404 Not Found", str(ctx.exception))  # real cause surfaced
+
 
 class Suite(unittest.TestCase):
     def test_teardown_always_runs(self):

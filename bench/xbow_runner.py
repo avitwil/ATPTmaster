@@ -73,6 +73,14 @@ class Compose:
     """Real docker-compose lifecycle. Injected so tests never touch docker."""
     def up(self, d, flag) -> str:
         env = dict(os.environ, FLAG=flag)
+        self._build(d, env, flag)
+        subprocess.run(["docker", "compose", "up", "-d"], cwd=d, env=env,
+                       check=True, capture_output=True, text=True, timeout=300)
+        base_url = self._resolve_target(d, env)
+        self._wait_ready(base_url)
+        return base_url
+
+    def _build(self, d, env, flag):
         # Inject the flag as an EXPLICIT build-arg (both FLAG and flag, matching
         # the benchmarks' own common.mk). Relying on compose to forward the FLAG
         # env var to the Dockerfile ARG only works for the ~88 challenges whose
@@ -80,15 +88,20 @@ class Compose:
         # declare `ARG FLAG` in the Dockerfile but omit it from compose, so the
         # env route silently baked an EMPTY /flag.txt and left them unsolvable
         # (the target had no flag to find). --build-arg reaches every Dockerfile.
-        subprocess.run(["docker", "compose", "build",
-                        "--build-arg", f"FLAG={flag}", "--build-arg", f"flag={flag}"],
-                       cwd=d, env=env, check=True, capture_output=True, text=True,
-                       timeout=1200)
-        subprocess.run(["docker", "compose", "up", "-d"], cwd=d, env=env,
-                       check=True, capture_output=True, text=True, timeout=300)
-        base_url = self._resolve_target(d, env)
-        self._wait_ready(base_url)
-        return base_url
+        cmd = ["docker", "compose", "build",
+               "--build-arg", f"FLAG={flag}", "--build-arg", f"flag={flag}"]
+        # Some challenge Dockerfiles apt-install against Debian's CDN, which
+        # intermittently 404s on a just-rotated .deb; a second attempt usually
+        # hits a fresh index. Retry once, then surface the real stderr (a bare
+        # CalledProcessError hides it) so the infra_error names the cause.
+        last = None
+        for _ in range(2):
+            last = subprocess.run(cmd, cwd=d, env=env, capture_output=True,
+                                  text=True, timeout=1800)
+            if last.returncode == 0:
+                return
+        tail = (last.stderr or last.stdout or "").strip()[-600:]
+        raise RuntimeError(f"docker compose build failed (exit {last.returncode}): {tail}")
 
     def down(self, d):
         subprocess.run(["docker", "compose", "down", "-v"], cwd=d,
