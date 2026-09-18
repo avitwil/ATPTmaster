@@ -56,6 +56,25 @@ class Executor(unittest.TestCase):
         self.assertIn("200", obs.text)
 
 
+class CurlArgs(unittest.TestCase):
+    def test_dict_data_is_json_encoded_and_all_str(self):
+        args = X._curl_args("http://t", {"path": "/p", "method": "post", "data": {"id": 2}})
+        self.assertTrue(all(isinstance(a, str) for a in args))
+        self.assertIn("http://t/p", args)
+        self.assertIn("POST", args)                 # method upper-cased
+        i = args.index("-d")
+        self.assertEqual(args[i + 1], '{"id": 2}')  # dict serialized to JSON
+
+    def test_str_data_passthrough(self):
+        args = X._curl_args("http://t", {"path": "/", "data": "id=2"})
+        i = args.index("-d")
+        self.assertEqual(args[i + 1], "id=2")
+
+    def test_no_data_no_dflag(self):
+        args = X._curl_args("http://t", {"path": "/"})
+        self.assertNotIn("-d", args)
+
+
 class Suite(unittest.TestCase):
     def test_teardown_always_runs(self):
         events = []
