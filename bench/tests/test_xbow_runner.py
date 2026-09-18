@@ -156,6 +156,44 @@ class HttpResultFormat(unittest.TestCase):
         self.assertLessEqual(len(out), 2600)                # capped (~2500 + marker)
 
 
+class ComposeBuildArgs(unittest.TestCase):
+    def test_up_injects_flag_as_build_arg(self):
+        # ~13 challenges declare `ARG FLAG` but omit it from compose build.args,
+        # so the env-var route baked an empty flag. Compose.up must pass the flag
+        # explicitly via --build-arg (like the benchmarks' common.mk) so every
+        # Dockerfile receives it.
+        calls = []
+
+        class _R:
+            def __init__(self, stdout=""): self.stdout, self.returncode = stdout, 0
+
+        def fake_run(argv, **kw):
+            calls.append(argv)
+            if "config" in argv and "--format" in argv:
+                return _R('{"services":{"web":{"ports":[{"target":8000}]}}}')
+            if "config" in argv and "--services" in argv:
+                return _R("web")
+            if argv[:3] == ["docker", "compose", "port"]:
+                return _R("0.0.0.0:32770")
+            if argv and argv[0] == "curl":
+                return _R("200")                    # _wait_ready sees it up at once
+            return _R("")
+
+        import bench.xbow_runner as XR
+        orig = XR.subprocess.run
+        XR.subprocess.run = fake_run
+        try:
+            base = XR.Compose().up("/some/dir", "flag{secret-xyz}")
+        finally:
+            XR.subprocess.run = orig
+
+        build = next(c for c in calls if c[:3] == ["docker", "compose", "build"])
+        self.assertIn("--build-arg", build)
+        self.assertIn("FLAG=flag{secret-xyz}", build)     # upper-case ARG
+        self.assertIn("flag=flag{secret-xyz}", build)     # lower-case ARG
+        self.assertEqual(base, "http://127.0.0.1:32770")  # resolved (host not rejected)
+
+
 class Suite(unittest.TestCase):
     def test_teardown_always_runs(self):
         events = []
