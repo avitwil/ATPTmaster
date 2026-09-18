@@ -1,12 +1,14 @@
 """Adapt ATPT's ReasoningLadder to the agent's Brain protocol.
-Primary = Opus via the Claude Code CLI; fallback = DeepHat via Ollama.
-A provider refusal advances the ladder (ReasoningLadder's own behavior)."""
+Primary = Opus via the Claude Code CLI; fallback = a local model (DeepHat via
+Ollama) or another hosted CLI (Codex). A provider refusal advances the ladder
+(ReasoningLadder's own behavior)."""
 from __future__ import annotations
 import shutil
 
 from atpt.reasoning import ReasoningLadder
 
 DEEPHAT_MODEL = "hf.co/mradermacher/DeepHat-V1-7B-GGUF:Q4_K_M"
+CODEX_MODEL = "gpt-5.6-sol"
 
 _PROVIDERS = {
     "opus": lambda claude_path: {
@@ -17,6 +19,13 @@ _PROVIDERS = {
     "deephat": lambda _cp: {
         "backend": "ollama", "model": DEEPHAT_MODEL,
         "endpoint": "http://localhost:11434/api/generate", "timeout": 300,
+    },
+    # Codex CLI (OpenAI, ChatGPT auth) — a remote fallback with no local GPU
+    # load, for machines where running a local Ollama model is not viable.
+    "codex": lambda _cp: {
+        "backend": "cli",
+        "cmd": f"{shutil.which('codex') or 'codex'} exec",
+        "model": CODEX_MODEL, "model_flag": "-m", "timeout": 300,
     },
 }
 

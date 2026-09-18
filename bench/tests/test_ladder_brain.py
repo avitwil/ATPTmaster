@@ -18,6 +18,18 @@ class BuildConfig(unittest.TestCase):
         cfg = ladder_brain.build_config(primary="deephat", fallback=None)
         self.assertEqual([e["provider"] for e in cfg["ladder"]], ["deephat"])
 
+    def test_codex_fallback_is_cli_no_ollama(self):
+        cfg = ladder_brain.build_config(primary="opus", fallback="codex",
+                                        claude_path="/usr/bin/claude")
+        self.assertEqual([e["provider"] for e in cfg["ladder"]], ["opus", "codex"])
+        cx = cfg["providers"]["codex"]
+        self.assertEqual(cx["backend"], "cli")           # remote CLI, no GPU
+        self.assertIn("codex exec", cx["cmd"])
+        self.assertEqual(cx["model"], "gpt-5.6-sol")
+        self.assertEqual(cx["model_flag"], "-m")
+        # no ollama backend anywhere in an opus->codex ladder
+        self.assertFalse(any(p["backend"] == "ollama" for p in cfg["providers"].values()))
+
 
 class Fallback(unittest.TestCase):
     def test_opus_refusal_advances_to_deephat(self):
