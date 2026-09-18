@@ -26,6 +26,24 @@ class ExecTest(unittest.TestCase):
     def test_harvest_nothing(self):
         self.assertEqual(harvest(["id"], {"rc": 0, "out": "uid=0", "err": ""}), ([], []))
 
+    def test_harvest_curl_web_endpoint(self):
+        out = "HTTP/1.1 200 OK\r\nServer: Gunicorn\r\n\r\n<html>"
+        assets, _ = harvest(["curl", "-s", "-i", "http://10.1.1.5/"], {"rc": 0, "out": out, "err": ""})
+        self.assertEqual(len(assets), 1)
+        self.assertEqual(assets[0]["asset_type"], "web_endpoint")
+        self.assertEqual(assets[0]["value"], "http://10.1.1.5/")
+        self.assertEqual(assets[0]["http_status"], 200)
+
+    def test_harvest_whatweb_endpoint(self):
+        assets, _ = harvest(["whatweb", "-a", "3", "http://10.1.1.5/"], {"rc": 0, "out": "nginx", "err": ""})
+        self.assertEqual(assets[0]["asset_type"], "web_endpoint")
+
+    def test_harvest_gobuster_paths(self):
+        out = "http://10.1.1.5/admin (Status: 200)\nhttp://10.1.1.5/login (Status: 302)\n"
+        assets, _ = harvest(["gobuster", "dir", "-u", "http://10.1.1.5/"], {"rc": 0, "out": out, "err": ""})
+        paths = [a["value"] for a in assets if a["asset_type"] == "web_path"]
+        self.assertIn("http://10.1.1.5/admin", paths)
+
 
 if __name__ == "__main__":
     unittest.main()
