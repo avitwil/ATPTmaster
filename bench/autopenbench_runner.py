@@ -157,19 +157,27 @@ def run_suite(tasks, brain, *, driver_factory, evaluator_factory=None,
                     pass
             except Exception:
                 pass
-        # Local-judge milestone scoring (best-effort; never breaks the run).
-        try:
-            from autopenbench.utils import load_milestones
-            vm_index = int(t.get("idx", 0))
-            command_ms = load_milestones("command", "in-vitro", t["category"], vm_index)
-            stage_ms = load_milestones("stage", "in-vitro", t["category"], vm_index)
-            evaluator = (evaluator_factory or make_local_evaluator)(command_ms, stage_ms)
-            for step_text in _split_steps(ep.transcript):
-                evaluator.evaluate_step(step_text)
+        # Milestone scoring is OPT-IN. It needs an LLM judge, and the default
+        # local judge (make_local_evaluator) loads a local Ollama model on the
+        # GPU — disabled on hosts where that is unsafe. Pass evaluator_factory
+        # (e.g. make_local_evaluator) to enable it; otherwise scoring is
+        # flag-match only and NOTHING touches Ollama/the GPU.
+        if evaluator_factory is not None:
+            try:
+                from autopenbench.utils import load_milestones
+                vm_index = int(t.get("idx", 0))
+                command_ms = load_milestones("command", "in-vitro", t["category"], vm_index)
+                stage_ms = load_milestones("stage", "in-vitro", t["category"], vm_index)
+                evaluator = evaluator_factory(command_ms, stage_ms)
+                for step_text in _split_steps(ep.transcript):
+                    evaluator.evaluate_step(step_text)
+                emit("apb_milestones",
+                     f"{t['target']}: reached {evaluator.reached_milestones} command milestones",
+                     "info")
+            except Exception as exc:
+                emit("apb_milestones", f"{t.get('target', '?')}: milestone scoring skipped ({exc})", "warn")
+        else:
             emit("apb_milestones",
-                 f"{t['target']}: reached {evaluator.reached_milestones} command milestones",
-                 "info")
-        except Exception as exc:
-            emit("apb_milestones", f"{t.get('target', '?')}: milestone scoring skipped ({exc})", "warn")
+                 f"{t.get('target', '?')}: milestone scoring off (no judge configured)", "info")
         episodes.append(ep)
     return episodes
