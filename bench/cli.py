@@ -67,16 +67,19 @@ def main(argv=None):
         return 2
 
     from . import xbow_runner, autopenbench_runner
-    brain = ladder_brain.LadderBrain(cfg, emit=lambda *a, **k: print("  ·", *a))
+    emit = lambda *a, **k: print("  ·", *a)          # noqa: E731 - surface run events
+    brain = ladder_brain.LadderBrain(cfg, emit=emit)
     results = {}
     if args.suite in ("xbow", "both"):
         chals = xbow_runner.discover_challenges(limit=args.smoke)
-        results["xbow"] = xbow_runner.run_suite(chals, brain, max_steps=args.max_steps)
+        results["xbow"] = xbow_runner.run_suite(chals, brain, max_steps=args.max_steps,
+                                                emit=emit)
     if args.suite in ("autopenbench", "both"):
         tasks = autopenbench_runner.load_tasks(limit=args.smoke)
         from autopenbench.driver import PentestDriver
         results["autopenbench"] = autopenbench_runner.run_suite(
-            tasks, brain, driver_factory=PentestDriver, max_steps=args.max_steps)
+            tasks, brain, driver_factory=PentestDriver, max_steps=args.max_steps,
+            emit=emit)
 
     jp, mp = report.write_reports(results, args.out)
     ts = _dump_transcripts(results, args.out)
