@@ -1,0 +1,13 @@
+{
+  "id": "agent_offensive",
+  "name": "LLM Offensive Agent",
+  "phase": "recon",
+  "entrypoint": "module:AgentOffensive",
+  "consumes": [],
+  "provides": ["asset"],
+  "intrusive": true,
+  "run_modes": ["step", "semi", "full"],
+  "enabled": true,
+  "extracted_from": "atpt-native",
+  "description": "LLM-driven recon->exploit ReAct loop, opt-in via config.offensive_agent.enabled; every command passes the deterministic ScopeGuard (scope wall + allowlist + denylist). No-op when disabled."
+}
