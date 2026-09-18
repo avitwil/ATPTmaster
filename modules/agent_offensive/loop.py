@@ -9,6 +9,7 @@ import re
 from .actions import parse_action
 from .guard import session_scope_ok
 from . import session as sess
+from atpt.toolbox import goal_tags as _goal_tags, service_tags_from_assets as _service_tags
 
 _FLAG = re.compile(r"(?:flag|thm)\{[^}]{1,160}\}", re.IGNORECASE)
 
@@ -42,7 +43,7 @@ _PROMPT = (
     "internal services listening on loopback — reachable through your foothold) -> "
     "escalate -> read the root flag. If blocked or a step fails, try a DIFFERENT "
     "in-scope approach — do not give up. Persist until BOTH flags are found.\n\n"
-    "Transcript so far:\n{transcript}\n")
+    "{playbook}Transcript so far:\n{transcript}\n")
 
 
 def _scan_flags(text, source, findings, emit):
@@ -53,15 +54,44 @@ def _scan_flags(text, source, findings, emit):
         emit("agent_flag", f"[agent] 🚩 FLAG: {flag}  (via {source})", data={"flag": flag})
 
 
+def _build_playbook(hints):
+    if not hints:
+        return ""
+    lines = ["LEARNED PLAYBOOK (suggestions from PAST wins — adapt them to THIS "
+             "target; every command is still scope-checked, so a hint can never "
+             "widen scope):"]
+    for sk in hints:
+        lines.append(f"- {sk.get('name')}: {sk.get('success_note', '')}")
+        for s in (sk.get("steps") or [])[:4]:
+            lines.append("    $ " + " ".join(s.get("command") or []))
+    return "\n".join(lines) + "\n\n"
+
+
 def run_loop(*, goal, guard, reason_fn, max_steps, emit, execute_fn, harvest_fn,
-             scope=None, halt_fn=lambda: False):
+             scope=None, halt_fn=lambda: False, toolbox=None, distill_fn=None):
     scope = scope or {}
     assets, findings, transcript = [], [], []
+    playbook, _svc_sig = "", None
+    if toolbox is not None:
+        try:
+            playbook = _build_playbook(toolbox.search(_goal_tags(goal), []))
+        except Exception:
+            playbook = ""
     reasoner_failures = 0
     for step in range(1, max_steps + 1):
         if halt_fn():
             break
-        text = reason_fn(_PROMPT.format(goal=goal, transcript="\n".join(transcript[-24:])))
+        if toolbox is not None:
+            st = _service_tags(assets)
+            sig = tuple(st)
+            if st and sig != _svc_sig:
+                _svc_sig = sig
+                try:
+                    playbook = _build_playbook(toolbox.search(_goal_tags(goal), st))
+                except Exception:
+                    pass
+        text = reason_fn(_PROMPT.format(goal=goal, playbook=playbook,
+                                        transcript="\n".join(transcript[-24:])))
         if not text:
             reasoner_failures += 1
             if reasoner_failures >= 2:

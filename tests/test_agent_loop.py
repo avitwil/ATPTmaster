@@ -1,7 +1,10 @@
 import unittest
+from tempfile import TemporaryDirectory
+from pathlib import Path
 
 from modules.agent_offensive.guard import ScopeGuard, DEFAULT_ALLOW
 from modules.agent_offensive.loop import run_loop
+from atpt.toolbox import Toolbox
 
 SCOPE = {"in_scope_cidrs": ["10.1.1.0/24"]}
 
@@ -129,6 +132,48 @@ class LoopTest(unittest.TestCase):
             goal="x", guard=guard(), reason_fn=lambda _: None, max_steps=5,
             emit=lambda *a, **k: None, execute_fn=lambda *a, **k: {}, harvest_fn=lambda a, r: ([], []))
         self.assertIn("no_reasoner", summary)
+
+
+class LoopToolboxInjectTest(unittest.TestCase):
+    def test_playbook_hint_injected_after_service_discovered(self):
+        tmp = TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        tb = Toolbox(Path(tmp.name) / "toolbox")
+        tb.save({"name": "ssh-cred-reuse", "applies_to": {"service_tags": ["ssh"]},
+                 "steps": [{"command": ["hydra", "-l", "root", "{TARGET}"]}],
+                 "success_note": "reused creds over ssh"})
+        prompts = []
+        # step 1 runs a real command (so an ssh asset is harvested); step 2's
+        # prompt should then carry the ssh skill. A 'done' first action would end
+        # the loop before any harvest, so the hint must be checked on prompt[1].
+        scripted = iter(['{"command":["nmap","-Pn","10.1.1.5"]}', '{"done": true}'])
+
+        def rf(p):
+            prompts.append(p)
+            return next(scripted)
+
+        run_loop(goal="get a shell", guard=guard(), scope=SCOPE, reason_fn=rf,
+                 max_steps=2, emit=lambda *a, **k: None,
+                 execute_fn=lambda argv, timeout=300: {"rc": 0, "out": "", "err": ""},
+                 harvest_fn=lambda a, r: ([{"asset_type": "service", "service": "ssh",
+                                            "value": "10.1.1.5:22/ssh"}], []),
+                 toolbox=tb)
+        self.assertNotIn("LEARNED PLAYBOOK", prompts[0])   # no services discovered yet
+        self.assertIn("LEARNED PLAYBOOK", prompts[1])
+        self.assertIn("ssh-cred-reuse", prompts[1])
+
+    def test_toolbox_none_leaves_prompt_clean(self):
+        prompts = []
+
+        def rf(p):
+            prompts.append(p)
+            return '{"done": true}'
+
+        run_loop(goal="x", guard=guard(), reason_fn=rf, max_steps=1,
+                 emit=lambda *a, **k: None,
+                 execute_fn=lambda argv, timeout=300: {"rc": 0, "out": "", "err": ""},
+                 harvest_fn=lambda a, r: ([], []))
+        self.assertFalse(any("LEARNED PLAYBOOK" in p for p in prompts))
 
 
 if __name__ == "__main__":
