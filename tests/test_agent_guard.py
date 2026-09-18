@@ -43,6 +43,24 @@ class GuardTest(unittest.TestCase):
                           "--data-urlencode", "host=$(id)"])
         self.assertFalse(v.blocked)
 
+    def test_searchsploit_no_target_allowed(self):
+        # a local arsenal tool needs no connect target
+        self.assertFalse(self.g(extra={"searchsploit"}).vet(["searchsploit", "gunicorn"]).blocked)
+
+    def test_metasploit_in_scope_rhosts_allowed(self):
+        argv = ["msfconsole", "-q", "-x",
+                "use exploit/x; set RHOSTS 10.1.1.5; set LHOST 10.1.1.9; run; exit"]
+        self.assertFalse(self.g(extra={"msfconsole"}).vet(argv).blocked)
+
+    def test_metasploit_out_of_scope_rhosts_blocked(self):
+        argv = ["msfconsole", "-q", "-x", "use exploit/x; set RHOSTS 10.9.9.9; run; exit"]
+        v = self.g(extra={"msfconsole"}).vet(argv)
+        self.assertTrue(v.blocked)
+        self.assertIn("10.9.9.9", v.reason)
+
+    def test_nonarsenal_no_target_still_failclosed(self):
+        self.assertTrue(self.g().vet(["nmap", "-sV"]).blocked)   # unchanged policy
+
     def test_session_local_commands_allowed(self):
         for cmd in ("id", "cat /home/web/user.txt", "sudo -l", "cat report.tar.gz",
                     "find / -perm -4000 2>/dev/null", "curl http://127.0.0.1:8080/"):

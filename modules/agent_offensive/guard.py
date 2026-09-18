@@ -49,14 +49,26 @@ DEFAULT_ALLOW = frozenset({
 # can be added per engagement via config.offensive_agent.allow_bins.
 OFFENSIVE_ALLOW = frozenset({
     "sqlmap", "hydra", "medusa", "wget", "nc", "ncat", "feroxbuster", "wfuzz",
-    "smbclient", "smbmap", "enum4linux", "crackmapexec", "redis-cli"})
+    "smbclient", "smbmap", "enum4linux", "crackmapexec", "redis-cli",
+    # Kali arsenal — use existing tools, don't hand-write exploits
+    "msfconsole", "msfvenom", "searchsploit", "exploitdb"})
 
-_DENY_ARGS = frozenset({
-    "-o", "--output", "-O", "--upload-file", "--data-binary",
-    # egress redirect: these can route the connection to an off-scope host,
-    # so the URL scope-check would no longer reflect where traffic actually goes.
-    "-x", "--proxy", "--preproxy", "--socks4", "--socks5", "--socks5-hostname",
-    "--connect-to", "--resolve"})
+# Tools that work locally or carry their target internally (metasploit's RHOSTS
+# lives inside -x); allowed without a separately-parseable in-scope target. Still
+# allowlist-gated, still egress-denied, and any out-of-scope IP anywhere in the
+# command is still blocked (see vet).
+_NO_TARGET_OK = frozenset({"searchsploit", "msfvenom", "exploitdb", "msfconsole"})
+_IPV4 = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
+_LOOPBACK = frozenset({"127.0.0.1", "0.0.0.0"})
+
+# Write/output/exfil flags — denied for every tool.
+_DENY_ARGS = frozenset({"-O", "--upload-file", "--data-binary"})
+# Egress-redirect flags — deny only for the HTTP clients that use them this way
+# (curl/wget). Other tools reuse some of these letters differently (msfconsole -x
+# runs commands; curl -x is a proxy), so they must be tool-scoped.
+_PROXY_FLAGS = frozenset({"-x", "--proxy", "--preproxy", "--socks4", "--socks5",
+                          "--socks5-hostname", "--connect-to", "--resolve"})
+_PROXY_TOOLS = frozenset({"curl", "wget"})
 
 
 @dataclass
@@ -81,13 +93,24 @@ class ScopeGuard:
             # -O remote-name vs -o outfile), so never lowercase before matching.
             if a in _DENY_ARGS or a.startswith("-o") or a.startswith("--output") \
                     or "file://" in a.lower():
-                return Verdict(True, f"write/egress flag '{a}' denied")
+                return Verdict(True, f"write/output flag '{a}' denied")
+            if argv[0] in _PROXY_TOOLS and a in _PROXY_FLAGS:
+                return Verdict(True, f"proxy/egress flag '{a}' denied")
         targets = extract_targets(argv)
         if not targets:
-            return Verdict(True, "no in-scope target could be parsed (fail-closed)")
-        for t in targets:
-            if not in_scope(self.scope, t):
-                return Verdict(True, f"target '{t}' is out of scope")
+            # A local/arsenal tool (searchsploit, msfvenom, metasploit) has no
+            # separately-parseable connect target — allow it, but still block any
+            # out-of-scope IP appearing anywhere in the command (e.g. an msf RHOSTS
+            # inside -x). Other tools stay fail-closed: no target => blocked.
+            if argv[0] not in _NO_TARGET_OK:
+                return Verdict(True, "no in-scope target could be parsed (fail-closed)")
+            for ip in _IPV4.findall(" ".join(argv)):
+                if ip not in _LOOPBACK and not in_scope(self.scope, ip):
+                    return Verdict(True, f"references out-of-scope host '{ip}'")
+        else:
+            for t in targets:
+                if not in_scope(self.scope, t):
+                    return Verdict(True, f"target '{t}' is out of scope")
         if self.judge_fn:
             reason = self.judge_fn(argv)
             if reason:

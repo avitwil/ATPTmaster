@@ -21,6 +21,9 @@ _PROMPT = (
     '  {{"session": "id", "rationale": "..."}}                run a command in the caught shell\n'
     '  {{"ssh": {{"host":"h","user":"u"}}}}                     open an SSH session (if you have creds)\n'
     '  {{"done": true}}                                         only when BOTH flags are captured\n\n'
+    "This runs on Kali — PREFER its built-in tools first (searchsploit, metasploit, "
+    "sqlmap, hydra, nmap NSE, etc.). Only hand-write a custom exploit if no built-in "
+    "tool fits or the built-in one does not work.\n"
     "Strategy: enumerate -> find a vulnerability -> get a foothold (arm a listener, "
     "then trigger a reverse shell back to its host:port via your exploit) -> in the "
     "session read the user flag, enumerate privesc (sudo -l, SUID, cron, caps), "
