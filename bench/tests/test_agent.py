@@ -77,6 +77,21 @@ class EpisodeLoop(unittest.TestCase):
         self.assertFalse(ep.solved)
         self.assertEqual(ep.stop_reason, "no_reasoner")
 
+    def test_transient_reasoner_failure_is_retried(self):
+        class FlakyBrain:
+            def __init__(self):
+                self.calls = 0
+
+            def think(self, transcript):
+                self.calls += 1
+                if self.calls == 1:            # first think fails (e.g. timeout)
+                    return "", None
+                return '```json\n{"tool":"final_answer","args":{"flag":"GOOD"}}\n```', "opus"
+
+        ep = run_episode(FlakyBrain(), FakeExecutor(), "t8", "goal", max_steps=5)
+        self.assertTrue(ep.solved)             # recovered instead of no_reasoner
+        self.assertEqual(ep.stop_reason, "final_answer")
+
     def test_tool_error_becomes_observation_and_continues(self):
         calls = {"n": 0}
 
