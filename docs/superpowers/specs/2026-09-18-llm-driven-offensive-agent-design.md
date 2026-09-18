@@ -230,6 +230,30 @@ real LLM, no network, no real scanning:
    project's existing fail-closed exploit posture. The user can widen it per
    engagement via `allow_bins`.
 
+## Phase 2 (designed later, built after the core is live-tested): Strategy Toolbox
+
+The agent accumulates experience. When a trajectory *succeeds* (leads to a real
+asset/finding), it is distilled into a reusable **skill** and saved to a toolbox;
+on a later target the agent searches the toolbox for a skill matching the current
+goal and reuses it instead of rediscovering from scratch.
+
+- **A skill** = `{name, applies_to (goal/service tags), steps (templated argv),
+  provenance (engagement/finding), success_note}` — persisted (store table or
+  files under the data home).
+- **Save-on-success:** at end of a run (or when a finding is confirmed), an LLM
+  distills the winning steps into a skill; saved skills are operator-visible and
+  editable (they are suggestions, not automation).
+- **Retrieve:** at loop start / per step, search the toolbox (keyword/tag match,
+  stdlib-only — no embeddings) for skills whose `applies_to` fits the goal and the
+  discovered services, and inject the top matches into the executor prompt.
+- **Safety unchanged:** a skill only *suggests* commands; every command it yields
+  still passes the deterministic `ScopeGuard`. A learned skill can never widen
+  scope or the allowlist.
+
+This is intentionally deferred: a skill is a distilled *successful* trajectory, so
+the core propose→vet→run→observe loop must exist and run first. Phase 2 gets its
+own spec section + plan.
+
 ## Open for implementation-plan stage
 
 - Exact target-extraction rules per binary (a small, tested parser table).
