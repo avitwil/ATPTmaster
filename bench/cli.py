@@ -1,9 +1,30 @@
 """bench CLI: preflight, build the ladder, run a suite, write the scoreboard."""
 from __future__ import annotations
 import argparse
+import os
 import sys
 
 from . import ladder_brain, preflight, report
+
+
+def _dump_transcripts(results, out_dir):
+    """Write each episode's full transcript to out_dir/transcripts/ so a run is
+    inspectable (why did it solve/fail?). Never breaks the run."""
+    tdir = os.path.join(out_dir, "transcripts")
+    written = []
+    try:
+        os.makedirs(tdir, exist_ok=True)
+        for suite, eps in results.items():
+            for e in eps:
+                safe = "".join(c if (c.isalnum() or c in "-._") else "_"
+                               for c in str(e.task_id))
+                path = os.path.join(tdir, f"{suite}__{safe}.txt")
+                with open(path, "w") as f:
+                    f.write(e.transcript or "")
+                written.append(path)
+    except Exception:
+        pass
+    return written
 
 
 def build_parser():
@@ -58,8 +79,12 @@ def main(argv=None):
             tasks, brain, driver_factory=PentestDriver, max_steps=args.max_steps)
 
     jp, mp = report.write_reports(results, args.out)
+    ts = _dump_transcripts(results, args.out)
     print(f"\nScoreboard: {mp}\n           {jp}")
-    print(open(mp).read())
+    if ts:
+        print(f"Transcripts: {os.path.join(args.out, 'transcripts')}/ ({len(ts)} files)")
+    with open(mp) as f:
+        print(f.read())
     return 0
 
 
