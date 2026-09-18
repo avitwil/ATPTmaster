@@ -13,7 +13,12 @@ DEFAULT_ALLOW = frozenset({
     "nmap", "curl", "httpx", "whatweb", "nikto", "gobuster", "ffuf",
     "wpscan", "nuclei", "dig", "whois"})
 
-_DENY_ARGS = frozenset({"-o", "--output", "-O", "--upload-file", "--data-binary"})
+_DENY_ARGS = frozenset({
+    "-o", "--output", "-O", "--upload-file", "--data-binary",
+    # egress redirect: these can route the connection to an off-scope host,
+    # so the URL scope-check would no longer reflect where traffic actually goes.
+    "-x", "--proxy", "--preproxy", "--socks4", "--socks5", "--socks5-hostname",
+    "--connect-to", "--resolve"})
 
 
 @dataclass
@@ -34,8 +39,10 @@ class ScopeGuard:
         if argv[0] not in self.allow:
             return Verdict(True, f"binary '{argv[0]}' not in allow-list")
         for a in argv[1:]:
-            al = a.lower()
-            if al in _DENY_ARGS or al.startswith("-o") or "file://" in al:
+            # case-SENSITIVE: curl flags differ by case (-X method vs -x proxy,
+            # -O remote-name vs -o outfile), so never lowercase before matching.
+            if a in _DENY_ARGS or a.startswith("-o") or a.startswith("--output") \
+                    or "file://" in a.lower():
                 return Verdict(True, f"write/egress flag '{a}' denied")
         targets = extract_targets(argv)
         if not targets:

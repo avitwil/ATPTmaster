@@ -1,12 +1,26 @@
-"""Extract candidate target hosts from a proposed command's argv, for the scope
-wall. Conservative: treats any argv token that looks like a host/IP or a URL as a
-target; a token that is purely a flag or a flag's numeric value is not."""
+"""Extract the CONNECT target host(s) from a proposed command's argv, for the
+scope wall. The target is where the tool actually connects — a URL or a bare
+host/IP argument — NOT the value of a payload/header/cookie/auth flag (an
+injection payload like `--data host=$(...)` is data sent TO the in-scope host,
+not a new target). Conservative and fail-closed: a malformed/payload-ish token
+is simply not treated as a target."""
 from __future__ import annotations
 import re
 
 from atpt.scope import _host_of
 
 _NUM = re.compile(r"^\d+$")
+# a real host/IP (v4/v6, optional port/brackets) — rejects payloads with =$;(){} etc.
+_HOSTISH = re.compile(r"^[A-Za-z0-9._:\[\]-]+$")
+
+# Flags whose following value is payload / headers / creds / method — never a
+# connect target. `-u`/`--user` is curl basic-auth (added only for curl; for
+# ffuf/gobuster/nuclei/sqlmap `-u`/`--url` IS the target and is not skipped).
+_SKIP_VALUE = frozenset({
+    "-d", "--data", "--data-raw", "--data-binary", "--data-urlencode", "--data-ascii",
+    "-F", "--form", "--form-string", "-H", "--header", "--headers", "-b", "--cookie",
+    "-A", "--user-agent", "-e", "--referer", "-X", "--request", "-w", "--wordlist"})
+_CURL_SKIP = frozenset({"-u", "--user"})
 
 
 def _looks_like_target(tok: str) -> bool:
@@ -20,12 +34,25 @@ def _looks_like_target(tok: str) -> bool:
 
 
 def extract_targets(argv: list[str]) -> list[str]:
+    skip = set(_SKIP_VALUE)
+    if argv and argv[0] == "curl":
+        skip |= _CURL_SKIP
     out, seen = [], set()
-    for tok in list(argv)[1:]:
-        if not _looks_like_target(tok):
+    toks = list(argv)[1:]
+    i = 0
+    while i < len(toks):
+        tok = toks[i]
+        if tok in skip:                       # flag whose value is not a target
+            i += 2
             continue
-        h = _host_of(tok)
-        if h and h not in seen:
-            seen.add(h)
-            out.append(h)
+        if "=" in tok and tok.split("=", 1)[0] in skip:   # inline --data=... form
+            i += 1
+            continue
+        if _looks_like_target(tok):
+            h = _host_of(tok)
+            # only accept a clean host/IP; payload-ish tokens (=$;(){}) are dropped
+            if h and _HOSTISH.match(h) and h not in seen:
+                seen.add(h)
+                out.append(h)
+        i += 1
     return out
