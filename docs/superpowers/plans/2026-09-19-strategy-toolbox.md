@@ -18,7 +18,7 @@
 - **Backward compatibility:** `run_loop(...)` gains only keyword-only params with defaults (`toolbox=None`, `distill_fn=None`). With them unset the loop behaves exactly as today; all existing `tests/test_agent_loop.py` cases must still pass unchanged.
 - Injected playbook text is deliberately **small** (top-2 skills, ≤4 steps each) — transcript bloat is what caused the Opus timeouts noted in the project history.
 - Tests use a **fake reasoner** (scripted strings) and a **tmp toolbox dir**; no network, no real LLM, no real scanning.
-- Run the suite with `python3 -m unittest discover -s tests` (repo convention); it must stay green.
+- **Test commands (this environment):** focused runs use `python3 -m unittest tests.test_<name> -v`; the **full suite runs under pytest**: `python3 -m pytest -q tests/` (the `unittest discover` runner collides with the `atpt` CLI argparse during collection and prints CLI help instead of running tests — do not use it). Baseline before this work: **281 passed**, plus 1 pre-existing `sqlite3.OperationalError: readonly database` ResourceWarning from a threaded web/desktop test (unrelated to the toolbox — not introduced by these tasks). The suite must stay green; your tasks must add no new warnings.
 
 ---
 
@@ -28,8 +28,8 @@ The working tree already has uncommitted, coherent changes (executor-prompt clar
 
 - [ ] **Step 1: Confirm the suite is green with the WIP in place**
 
-Run: `python3 -m unittest discover -s tests -q`
-Expected: OK (all pass).
+Run: `python3 -m pytest -q tests/`
+Expected: all pass.
 
 - [ ] **Step 2: Commit the WIP**
 
@@ -603,7 +603,7 @@ from atpt.toolbox import Toolbox
 
 
 class LoopToolboxInjectTest(unittest.TestCase):
-    def test_playbook_hint_injected_into_prompt(self):
+    def test_playbook_hint_injected_after_service_discovered(self):
         tmp = TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         tb = Toolbox(Path(tmp.name) / "toolbox")
@@ -611,20 +611,24 @@ class LoopToolboxInjectTest(unittest.TestCase):
                  "steps": [{"command": ["hydra", "-l", "root", "{TARGET}"]}],
                  "success_note": "reused creds over ssh"})
         prompts = []
+        # step 1 runs a real command (so an ssh asset is harvested); step 2's
+        # prompt should then carry the ssh skill. A 'done' first action would end
+        # the loop before any harvest, so the hint must be checked on prompt[1].
+        scripted = iter(['{"command":["nmap","-Pn","10.1.1.5"]}', '{"done": true}'])
 
         def rf(p):
             prompts.append(p)
-            return '{"done": true}'
+            return next(scripted)
 
-        # an ssh service asset makes the ssh skill match on the 2nd prompt
         run_loop(goal="get a shell", guard=guard(), scope=SCOPE, reason_fn=rf,
                  max_steps=2, emit=lambda *a, **k: None,
                  execute_fn=lambda argv, timeout=300: {"rc": 0, "out": "", "err": ""},
                  harvest_fn=lambda a, r: ([{"asset_type": "service", "service": "ssh",
                                             "value": "10.1.1.5:22/ssh"}], []),
                  toolbox=tb)
-        self.assertTrue(any("LEARNED PLAYBOOK" in p and "ssh-cred-reuse" in p
-                            for p in prompts))
+        self.assertNotIn("LEARNED PLAYBOOK", prompts[0])   # no services discovered yet
+        self.assertIn("LEARNED PLAYBOOK", prompts[1])
+        self.assertIn("ssh-cred-reuse", prompts[1])
 
     def test_toolbox_none_leaves_prompt_clean(self):
         prompts = []
@@ -889,18 +893,18 @@ class ModuleToolboxTest(unittest.TestCase):
         eng = {"id": "e1", "config": json.dumps({"offensive_agent": {"enabled": True,
                 "max_steps": 3, "allow_bins": []}})}
         scope = {"in_scope_cidrs": ["10.1.1.5/32"]}
+        # Keep it to command-then-done (no session step — that would touch the real
+        # session module). The nmap output carries a flag the loop's flag-scanner
+        # turns into a finding, so the run "succeeds" and distillation fires.
         steps = [
-            '{"command":["nmap","-Pn","10.1.1.5"]}',   # step 1 (finding comes via flag scan below)
-            '{"session":"x"}',                          # no session -> observation
-            '{"done": true}',                           # end
-            # distillation reply (after the loop ends with a finding):
+            '{"command":["nmap","-Pn","10.1.1.5"]}',   # step 1: output carries flag{seed}
+            '{"done": true}',                           # step 2: end
+            # distillation reply (loop ended with a finding):
             '{"name":"nmap-open","applies_to":{"service_tags":["http"]},'
             '"steps":[{"command":["nmap","-Pn","10.1.1.5"]}],"success_note":"scan"}',
         ]
         ctx = RunContext(engagement=eng, scope=scope, store=Store(), project_dir=pd,
                          reasoner=_Reasoner(steps), goals="capture the flag flag{seed}")
-        # Seed a finding deterministically: the nmap output carries a flag the
-        # loop's flag-scanner turns into a validated finding.
         mod = AgentOffensive(_manifest(), pd)
         # monkeypatch execute to emit a flag in output
         import modules.agent_offensive.module as M
@@ -985,8 +989,8 @@ Expected: PASS.
 
 - [ ] **Step 5: Full suite regression**
 
-Run: `python3 -m unittest discover -s tests -q`
-Expected: OK (everything green).
+Run: `python3 -m pytest -q tests/`
+Expected: all pass (baseline 281 + the new toolbox/distill/loop/module tests), no new warnings.
 
 - [ ] **Step 6: Commit**
 
@@ -1115,8 +1119,8 @@ In `openSettings(tab)`, when `tab==='toolbox'`, load the list:
 
 - [ ] **Step 5: Run to verify the route test passes + full suite**
 
-Run: `python3 -m unittest tests.test_web_toolbox -v && python3 -m unittest discover -s tests -q`
-Expected: PASS / OK.
+Run: `python3 -m unittest tests.test_web_toolbox -v && python3 -m pytest -q tests/`
+Expected: PASS / all pass.
 
 - [ ] **Step 6: Commit**
 
@@ -1196,8 +1200,8 @@ git commit -m "docs(readme): new screenshots — agent workflow, scope gate, too
 
 - [ ] **Step 1: Full suite green**
 
-Run: `python3 -m unittest discover -s tests -q`
-Expected: OK. Record the count.
+Run: `python3 -m pytest -q tests/`
+Expected: all pass. Record the count.
 
 - [ ] **Step 2: Integrate the branch**
 
@@ -1205,7 +1209,7 @@ Use the **superpowers:finishing-a-development-branch** skill to decide/execute i
 
 ```bash
 git checkout main && git merge --no-ff feat/llm-offensive-agent
-python3 -m unittest discover -s tests -q   # re-verify on main
+python3 -m pytest -q tests/   # re-verify on main
 ```
 
 - [ ] **Step 3: Push to GitHub**
