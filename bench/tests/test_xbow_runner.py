@@ -109,6 +109,30 @@ class PortCandidates(unittest.TestCase):
         self.assertIn("8000", ports)
 
 
+class PickBaseUrl(unittest.TestCase):
+    _DJANGO_400 = ("<h1>DisallowedHost at /</h1><pre>Invalid HTTP_HOST header: "
+                   "'127.0.0.1:32770'. You may need to add '127.0.0.1' to ALLOWED_HOSTS.</pre>")
+
+    def test_switches_to_localhost_when_127_rejected(self):
+        def probe(url):
+            return self._DJANGO_400 if "127.0.0.1" in url else "<h1>Welcome</h1>"
+        self.assertEqual(X._pick_base_url("32770", probe=probe),
+                         "http://localhost:32770")
+
+    def test_keeps_127_when_accepted(self):
+        got = X._pick_base_url("8080", probe=lambda url: "<html>ok</html>")
+        self.assertEqual(got, "http://127.0.0.1:8080")   # first candidate, no probe switch
+
+    def test_all_rejected_falls_back_to_default(self):
+        got = X._pick_base_url("9000", probe=lambda url: self._DJANGO_400)
+        self.assertEqual(got, "http://127.0.0.1:9000")
+
+    def test_host_rejected_detects_django_page(self):
+        self.assertTrue(X._host_rejected(self._DJANGO_400))
+        self.assertFalse(X._host_rejected("<h1>Login</h1>"))
+        self.assertFalse(X._host_rejected(""))
+
+
 class HttpResultFormat(unittest.TestCase):
     def test_nonempty_passthrough(self):
         out = X._format_http_result("HTTP/1.1 200 OK\n\nbody", 0, "", "http://t")

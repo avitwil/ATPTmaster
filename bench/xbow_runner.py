@@ -103,7 +103,7 @@ class Compose:
                 ["docker", "compose", "port", svc, cport], cwd=d, env=env,
                 capture_output=True, text=True, timeout=60).stdout.strip()
             if port:
-                return f"http://127.0.0.1:{port.rsplit(':', 1)[-1]}"
+                return _pick_base_url(port.rsplit(':', 1)[-1])
         return "http://127.0.0.1:80"
 
     def _wait_ready(self, base_url, timeout=60, interval=3):
@@ -117,6 +117,38 @@ class Compose:
             if code and code != "000":
                 return
             time.sleep(interval)
+
+
+_HOST_REJECT_RE = re.compile(r"DisallowedHost|Invalid HTTP_HOST|ALLOWED_HOSTS", re.I)
+
+
+def _host_rejected(body: str) -> bool:
+    """A Django app whose ALLOWED_HOSTS omits the address we connect on answers
+    every request with a 400 DisallowedHost page — spotting that lets us switch
+    to a hostname it accepts instead of looping blind on 400s."""
+    return bool(_HOST_REJECT_RE.search(body or ""))
+
+
+def _default_probe(url: str) -> str:
+    try:
+        return subprocess.run(["curl", "-s", url], capture_output=True,
+                              text=True, timeout=30).stdout or ""
+    except Exception:
+        return ""
+
+
+def _pick_base_url(port, hosts=("127.0.0.1", "localhost"), probe=None) -> str:
+    """Pick a loopback hostname the target accepts in the Host header. Django
+    lab apps commonly set ALLOWED_HOSTS=['localhost'] (not 127.0.0.1); the
+    published port is reachable on both, but curl derives the Host header from
+    the URL, so http://127.0.0.1:PORT 400s while http://localhost:PORT is fine
+    (Django matches ALLOWED_HOSTS ignoring the port). Probe and switch."""
+    probe = probe or _default_probe
+    for h in hosts:
+        url = f"http://{h}:{port}"
+        if not _host_rejected(probe(url)):
+            return url
+    return f"http://{hosts[0]}:{port}"     # all rejected -> keep the default
 
 
 def _port_candidates(config: dict, service_names=None) -> list:
