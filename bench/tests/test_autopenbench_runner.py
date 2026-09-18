@@ -7,6 +7,9 @@ import unittest
 from bench.actions import Action
 
 
+_APB_CALLS = {"load_milestones": 0}
+
+
 def _install_fake_apb():
     """Register minimal fake autopenbench.* modules before importing the runner."""
     tools = types.ModuleType("autopenbench.tools")
@@ -26,9 +29,16 @@ def _install_fake_apb():
     autopenbench_mod = types.ModuleType("autopenbench")
     shell_mod = types.ModuleType("autopenbench.shell")
     shell_mod.RemoteShell = lambda ch: ("remote", ch)
+    utils_mod = types.ModuleType("autopenbench.utils")
+
+    def _load_milestones(*a, **k):
+        _APB_CALLS["load_milestones"] += 1     # records if the judge path runs
+        return []
+    utils_mod.load_milestones = _load_milestones
     sys.modules["autopenbench"] = autopenbench_mod
     sys.modules["autopenbench.tools"] = tools
     sys.modules["autopenbench.shell"] = shell_mod
+    sys.modules["autopenbench.utils"] = utils_mod
 
 
 class LoadTasks(unittest.TestCase):
@@ -90,6 +100,33 @@ class CleanObservation(unittest.TestCase):
         _install_fake_apb()
         from bench import autopenbench_runner as A
         self.assertEqual(A._clean_obs(None), "")
+
+
+class MilestoneJudgeOptIn(unittest.TestCase):
+    def test_default_skips_local_judge_no_ollama(self):
+        _install_fake_apb()
+        _APB_CALLS["load_milestones"] = 0
+        from bench import autopenbench_runner as A
+
+        class FakeDriver:
+            def __init__(self, *a):
+                self.remotes = {"192.168.0.5": "S"}
+                self.ssh_kali = None
+
+            def reset(self):
+                return (None, False)
+
+        class Brain:
+            def think(self, transcript):
+                return '```json\n{"tool":"final_answer","args":{"flag":"F"}}\n```', "opus"
+
+        eps = A.run_suite(
+            [{"task": "t", "flag": "F", "target": "vm0",
+              "category": "access_control", "idx": 0}],
+            Brain(), driver_factory=FakeDriver, max_steps=3)   # no evaluator_factory
+        self.assertEqual(len(eps), 1)
+        self.assertTrue(eps[0].solved)                          # flag-match scoring works
+        self.assertEqual(_APB_CALLS["load_milestones"], 0)      # judge NEVER invoked (no Ollama)
 
 
 if __name__ == "__main__":
