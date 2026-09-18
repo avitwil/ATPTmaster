@@ -86,6 +86,77 @@ def _derive_scope(scope: dict) -> dict:
     return out
 
 
+def _enabled_without_target(scope: dict) -> list:
+    """Return the keys of scope categories that are selected (enabled) but carry
+    no concrete in-scope input. Such a category must not be scanned as "the full
+    domain" — the operator has to name a target. Legacy flat scopes (no `domains`
+    block) have no categories to check and return []."""
+    doms = (scope or {}).get("domains") or {}
+    empty = []
+    for key, d in doms.items():
+        if not (isinstance(d, dict) and d.get("enabled")):
+            continue
+        # a concrete target is any entry that is not blank and not the "whole
+        # domain" sentinel ('all' / '*') — those mean "everything", which is what
+        # we refuse to assume on the user's behalf.
+        concrete = [x for x in (d.get("in") or [])
+                    if str(x).strip() and str(x).strip().lower() not in ("all", "*")]
+        if not concrete:
+            empty.append(key)
+    return sorted(empty)
+
+
+def _pingable_targets(scope_json) -> list:
+    """Single in-scope hosts we can reachability-probe: domains and bare IPs / /32
+    CIDRs. Multi-host ranges (e.g. a /24) are skipped — there's no single address
+    to ping. Returns [] on any parse trouble (probe is best-effort)."""
+    import ipaddress
+    try:
+        scope = json.loads(scope_json) if isinstance(scope_json, str) else (scope_json or {})
+    except Exception:
+        return []
+    out = []
+    for d in scope.get("in_scope_domains") or []:
+        d = str(d).strip()
+        if d and d.lower() not in ("all", "*"):
+            out.append(d)
+    for c in scope.get("in_scope_cidrs") or []:
+        c = str(c).strip()
+        try:
+            net = ipaddress.ip_network(c, strict=False)
+            if net.num_addresses == 1:
+                out.append(str(net.network_address))
+        except ValueError:
+            if c and c.lower() not in ("all", "*"):
+                out.append(c)
+    seen, uniq = set(), []
+    for h in out:
+        if h not in seen:
+            seen.add(h); uniq.append(h)
+    return uniq
+
+
+def _wait_target_reachable(hosts, timeout: float = 45.0) -> bool:
+    """Poll until any host answers an ICMP echo, or the timeout elapses. Uses the
+    unprivileged `ping` binary (one packet, short wait). Returns True on the first
+    reply. Best-effort: a box that blocks ping simply times out here (caller warns
+    and scans anyway)."""
+    import subprocess
+    import time
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        for h in hosts:
+            try:
+                r = subprocess.run(["ping", "-c", "1", "-W", "2", h],
+                                   capture_output=True, timeout=4)
+                if r.returncode == 0:
+                    return True
+            except Exception:
+                pass
+        time.sleep(2)
+    return False
+
+
 def _redact_settings(s: dict) -> dict:
     """Return a copy safe to send to the client: stored API keys become a
     boolean `has_key` presence flag — the value never leaves the server."""
@@ -145,7 +216,7 @@ class WebApp:
             r = _RUNS.get(eid)
             return {"status": r["status"], "last": r.get("last")} if r else {"status": "idle"}
 
-    def _start_run(self, eid, mode):
+    def _start_run(self, eid, mode, vpn_path=None):
         with _RUNS_LOCK:
             r = _RUNS.get(eid)
             if r and r["status"] == "running":
@@ -157,6 +228,30 @@ class WebApp:
             store = self._store()
             eng = store.get_engagement(eid)
             try:
+                # RUN owns the tunnel: bring it up and wait for it before scanning,
+                # so recon never runs against a route that isn't connected yet.
+                if vpn_path and not vpn.is_up():
+                    store.add_event(eid, None, None, "info", "vpn_connect",
+                                    f"bringing up VPN ({vpn_path})…", None)
+                    cres = vpn.connect(vpn_path, privilege.current_password())
+                    if not cres.get("ok"):
+                        raise RuntimeError(f"VPN failed to start: {cres.get('error')}")
+                    if not vpn.wait_connected(timeout=30):
+                        raise RuntimeError(
+                            f"VPN did not connect: {vpn.status().get('error') or 'timeout'}")
+                    store.add_event(eid, None, None, "info", "vpn_connect",
+                                    "VPN connected — starting run", None)
+                    # The tunnel reports "connected" the moment openvpn finishes its
+                    # init — but pushed routes (and a freshly-deployed lab box that is
+                    # still booting) may not answer yet. Scanning now would find 0
+                    # ports and the whole run would silently produce nothing. Wait for
+                    # a target to actually respond; if none does, say so plainly.
+                    hosts = _pingable_targets(eng.get("scope"))
+                    if hosts and not _wait_target_reachable(hosts, timeout=45):
+                        store.add_event(eid, "recon", None, "warn", "target_unreachable",
+                            f"VPN is up but no in-scope target answered in 45s "
+                            f"({', '.join(hosts)}) — the box may still be booting or "
+                            f"blocks ping; scanning anyway", None)
                 res = self._orch(store).run(eng, mode, control=lambda: not halt.is_set())
             except Exception as exc:
                 store.add_event(eid, None, None, "error", "run_error", str(exc), None)
@@ -182,6 +277,8 @@ class WebApp:
             if action in ("pause", "stop"):
                 r["_pause"] = (action == "pause")
                 r["halt"].set()
+                if action == "stop":
+                    vpn.disconnect()      # STOP tears the tunnel down; pause keeps it
                 return self._json(200, {"status": "stopping"})
         return self._json(400, {"error": "unknown action"})
 
@@ -347,7 +444,20 @@ class WebApp:
         if path == "/api/vpn/connect" and method == "POST":
             return self._vpn_connect(store, eid, data)
         if path == "/api/run/start" and method == "POST":
-            return self._start_run(eid, data.get("mode") or store.get_engagement(eid)["mode"])
+            eng = store.get_engagement(eid)
+            cfg = json.loads(eng.get("config") or "{}")
+            vpath = (cfg.get("ctf") or {}).get("vpn_config_path")
+            if vpath and not vpn.is_up():
+                # RUN brings the tunnel up itself; needs the sudo password once.
+                pw = data.get("sudo_password")
+                if pw:
+                    privilege.set_password(pw)
+                if not privilege.current_password():
+                    return self._json(200, {"needs_sudo": True, "for": "run",
+                        "message": "sudo password required to bring up the VPN before the run"})
+            else:
+                vpath = None      # already up or none configured -> nothing to connect
+            return self._start_run(eid, data.get("mode") or eng["mode"], vpn_path=vpath)
         if path == "/api/run/control" and method == "POST":
             return self._control_run(eid, data.get("action"))
         if path == "/api/run/status" and method == "GET":
@@ -378,10 +488,18 @@ class WebApp:
 
     def _create_engagement(self, data):
         eid = (data.get("engagement") or "").strip()
-        scope = _derive_scope(data.get("scope") or {})
+        raw_scope = data.get("scope") or {}
+        scope = _derive_scope(raw_scope)
         has_target = bool(scope.get("in_scope_domains") or scope.get("in_scope_cidrs"))
         if not valid_eid(eid):
             return self._json(400, {"error": "engagement id must be 1-64 chars of [A-Za-z0-9_-]"})
+        # A selected (enabled) scope category with no input must NOT be treated as
+        # "the whole domain" — require the user to supply a concrete target for it.
+        empty = _enabled_without_target(raw_scope)
+        if empty:
+            return self._json(400, {"error": f"selected scope {'categories' if len(empty) > 1 else 'category'} "
+                                    f"{', '.join(empty)} need a target — supply an in-scope host/IP/CIDR "
+                                    f"(or deselect it); a blank category is not scanned as the full domain"})
         if not has_target:
             return self._json(400, {"error": "scope must define at least one in-scope domain or CIDR (target required)"})
         store = self._store()
@@ -635,6 +753,8 @@ def serve(project_dir, port=8787, host="127.0.0.1"):
         httpd.serve_forever()
     except KeyboardInterrupt:
         httpd.shutdown()
+    finally:
+        vpn.disconnect()          # tear any lab/CTF tunnel down when the console stops
 
 
 INDEX_HTML = r"""<!doctype html>
@@ -1070,13 +1190,18 @@ async function pollRun(){
 }
 $('#runbtn').onclick=async()=>{
   if(!ENG){chat('sys','Create or select an engagement first (☰ menu → Scope).');return}
-  await api('/api/run/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({eng:ENG,mode:MODE})});
+  const url='/api/run/start';const hdr={'Content-Type':'application/json'};
+  let r=await api(url,{method:'POST',headers:hdr,body:JSON.stringify({eng:ENG,mode:MODE})});
+  if(r&&r.needs_sudo){ const pw=prompt('sudo password (to bring up the VPN for this run):');
+    if(!pw){chat('sys','Run cancelled — VPN needs a sudo password to start.');return;}
+    r=await api(url,{method:'POST',headers:hdr,body:JSON.stringify({eng:ENG,mode:MODE,sudo_password:pw})}); }
+  if(r&&r.error){chat('sys','⚠ '+esc(r.error));return;}
   chat('sys','▶ Run started (<b>'+MODE+'</b>)…'); setRunUI('running'); RUNBUSY=true; pollRun();
 };
 function runControl(action,msg){ if(!ENG)return; chat('sys',msg);
   api('/api/run/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({eng:ENG,action})}); }
 $('#pausebtn').onclick=()=>runControl('pause','⏸ pausing after the current step…');
-$('#stopbtn').onclick=()=>runControl('stop','⏹ stopping after the current step…');
+$('#stopbtn').onclick=()=>runControl('stop','⏹ stopping after the current step & disconnecting VPN…');
 function downloadReport(){ if(!ENG){chat('sys','No engagement selected.');return} window.location='/api/report?eng='+encodeURIComponent(ENG); }
 $('#engsel').onchange=async()=>{ENG=$('#engsel').value;syncMode();await refreshAll();pollRun();};
 

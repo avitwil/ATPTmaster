@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from atpt.state import SQLiteStore
-from atpt.web import WebApp, valid_eid
+from atpt.web import WebApp, valid_eid, _pingable_targets
 
 
 class WebTest(unittest.TestCase):
@@ -35,6 +35,41 @@ class WebTest(unittest.TestCase):
         st, _, body, _ = self._post("/api/engagement", {"engagement": "x", "scope": {}})
         self.assertEqual(st, 400)
         self.assertIn("in-scope", json.loads(body)["error"])
+
+    def test_create_rejects_enabled_domain_without_target(self):
+        # enabling a scope category but leaving its input empty must NOT pass as
+        # "full scope of the domain" — the user must supply a concrete target.
+        st, _, body, _ = self._post("/api/engagement", {
+            "engagement": "web1", "mode": "semi",
+            "scope": {"domains": {"web": {"enabled": True, "in": [], "out": []}}}})
+        self.assertEqual(st, 400)
+        err = json.loads(body)["error"].lower()
+        self.assertIn("web", err)
+        self.assertIn("target", err)
+
+    def test_create_accepts_enabled_domain_with_target(self):
+        st, _, _, _ = self._post("/api/engagement", {
+            "engagement": "web2", "mode": "semi",
+            "scope": {"domains": {"web": {"enabled": True, "in": ["acme.com"]}}}})
+        self.assertEqual(st, 200)
+
+    def test_create_rejects_all_sentinel_as_full_scope(self):
+        # 'all' is the legacy "whole domain" sentinel — it must be refused, same
+        # as blank input, so scope is never silently broadened.
+        st, _, body, _ = self._post("/api/engagement", {
+            "engagement": "web4", "mode": "semi",
+            "scope": {"domains": {"web": {"enabled": True, "in": ["all"]}}}})
+        self.assertEqual(st, 400)
+        self.assertIn("target", json.loads(body)["error"].lower())
+
+    def test_create_ignores_disabled_empty_domain(self):
+        # a category left disabled is not "selected" — it needs no target.
+        st, _, _, _ = self._post("/api/engagement", {
+            "engagement": "web3", "mode": "semi",
+            "scope": {"domains": {
+                "web": {"enabled": True, "in": ["acme.com"]},
+                "api": {"enabled": False, "in": []}}}})
+        self.assertEqual(st, 200)
 
     def test_create_and_list_engagement(self):
         st, _, body, _ = self._post("/api/engagement", {
@@ -122,6 +157,22 @@ class WebTest(unittest.TestCase):
         self.assertEqual(scope["out_of_scope_cidrs"], ["10.0.0.5"])
         self.assertEqual(scope["out_of_scope"], ["secure.acme.com"])
         self.assertIn("mobile", scope["domains"])          # metadata preserved
+
+    def test_pingable_targets_picks_single_hosts_only(self):
+        # single IPs and domains are probeable; a /24 range and the 'all' sentinel
+        # are not — we can't ping a whole range and 'all' isn't a host.
+        hosts = _pingable_targets(json.dumps({
+            "in_scope_domains": ["acme.com", "all"],
+            "in_scope_cidrs": ["10.114.164.13", "10.0.0.0/24", "10.5.5.5/32"]}))
+        self.assertIn("acme.com", hosts)
+        self.assertIn("10.114.164.13", hosts)
+        self.assertIn("10.5.5.5", hosts)          # /32 -> single host
+        self.assertNotIn("10.0.0.0/24", hosts)    # range: not pingable
+        self.assertNotIn("all", hosts)
+
+    def test_pingable_targets_empty_on_junk(self):
+        self.assertEqual(_pingable_targets("not json"), [])
+        self.assertEqual(_pingable_targets({}), [])
 
     def test_logo_asset_served(self):
         st, ct, body, _ = self._get("/assets/logo.png")
