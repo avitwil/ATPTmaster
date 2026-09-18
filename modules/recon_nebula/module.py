@@ -13,6 +13,23 @@ from pathlib import Path
 from atpt.module import Module, ModuleResult
 
 
+def _scan_targets(scope) -> list:
+    """Concrete hosts to scan: in-scope domains + CIDRs, dropping the UI's "all"
+    sentinel (the settings form stores 'in': ['all'] for a whole category to mean
+    "everything discovered in scope", NOT a literal host — passing it as
+    `--target all` just makes naabu/nmap waste time failing to resolve "all")."""
+    scope = scope or {}
+    raw = (scope.get("in_scope_domains", []) or []) + (scope.get("in_scope_cidrs", []) or [])
+    out, seen = [], set()
+    for t in raw:
+        t = str(t or "").strip()
+        if not t or t.lower() == "all" or t in seen:
+            continue
+        seen.add(t)
+        out.append(t)
+    return out
+
+
 def _host_of(v):
     if not v:
         return None
@@ -78,7 +95,7 @@ class ReconNebula(Module):
         # nmap is in the default chain so a bare Kali box (no go-tools) still port-scans.
         tools = cfg.get("recon_tools", "subfinder,naabu,nmap,httpx,ffuf")
         rate = cfg.get("rate", 150)
-        targets = (ctx.scope.get("in_scope_domains", []) or []) + (ctx.scope.get("in_scope_cidrs", []) or [])
+        targets = _scan_targets(ctx.scope)
         tflags = " ".join(f"--target {shlex.quote(t)}" for t in targets)
         return (f"{shlex.quote(str(runner))} --engagement {shlex.quote(ctx.engagement['id'])} "
                 f"--scope {shlex.quote(str(scope_file))} --tools {shlex.quote(tools)} "
@@ -88,6 +105,15 @@ class ReconNebula(Module):
         return [f"recon_nebula: exec {self._command(ctx)}"]
 
     def run(self, ctx) -> ModuleResult:
+        # No concrete host in scope -> the runner would die "no --target provided"
+        # (exit 2). Say so plainly instead, so the operator knows to add a target
+        # IP/domain rather than seeing a cryptic recon failure.
+        if not ctx.dry_run and not _scan_targets(ctx.scope):
+            ctx.emit("recon_no_target",
+                     "[recon] no scannable target in scope — add a target host/IP "
+                     "(or CIDR) to the engagement's in-scope list, then run recon again.",
+                     phase="recon", module=self.id, level="warn")
+            return ModuleResult(assets=[], summary="no in-scope target to scan")
         cmd = self._command(ctx)
         if ctx.dry_run:
             ctx.emit("dry_run", f"[recon] would exec: {cmd}", phase="recon", module=self.id)
