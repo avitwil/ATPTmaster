@@ -89,6 +89,39 @@ class CurlArgs(unittest.TestCase):
         self.assertIn("Authorization: Bearer x", args)
 
 
+class PortCandidates(unittest.TestCase):
+    def test_reads_container_port_from_config(self):
+        cfg = {"services": {
+            "web": {"ports": [{"mode": "ingress", "target": 8000, "protocol": "tcp"}]},
+            "db": {}}}
+        cands = X._port_candidates(cfg, ["web", "db"])
+        self.assertIn(("web", "8000"), cands)              # real port, not 80
+        self.assertFalse(any(svc == "db" for svc, _ in cands))
+
+    def test_port_80_service_still_found(self):
+        cfg = {"services": {"app": {"ports": [{"target": 80}]}}}
+        self.assertEqual(X._port_candidates(cfg, ["app"]), [("app", "80")])
+
+    def test_fallback_common_ports_when_config_has_none(self):
+        cands = X._port_candidates({"services": {"web": {}}}, ["web"])
+        ports = [p for svc, p in cands if svc == "web"]
+        self.assertIn("80", ports)
+        self.assertIn("8000", ports)
+
+
+class HttpResultFormat(unittest.TestCase):
+    def test_nonempty_passthrough(self):
+        out = X._format_http_result("HTTP/1.1 200 OK\n\nbody", 0, "", "http://t")
+        self.assertIn("200 OK", out)
+
+    def test_empty_becomes_diagnostic(self):
+        out = X._format_http_result("", 7, "Connection refused", "http://127.0.0.1:80")
+        self.assertIn("no HTTP response", out)
+        self.assertIn("http://127.0.0.1:80", out)          # names the dead target
+        self.assertIn("exit 7", out)
+        self.assertIn("Connection refused", out)
+
+
 class Suite(unittest.TestCase):
     def test_teardown_always_runs(self):
         events = []
