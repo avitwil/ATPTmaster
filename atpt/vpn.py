@@ -6,13 +6,16 @@ password is fed once on stdin (from privilege, memory only) and never stored.
 Single active tunnel at a time. Stdlib-only; never raises.
 """
 from __future__ import annotations
+import atexit
 import shutil
 import subprocess
 import threading
 from pathlib import Path
 
 _LOCK = threading.Lock()
-_STATE: dict = {"proc": None, "status": "down", "config": None, "log": [], "error": None}
+_STATE: dict = {"proc": None, "status": "down", "config": None, "log": [],
+                "error": None, "sudo_pw": None}
+_ATEXIT_REGISTERED = False
 
 
 def _have(binary: str) -> bool:
@@ -52,6 +55,21 @@ def is_up() -> bool:
     return p is not None and p.poll() is None
 
 
+def wait_connected(timeout: float = 30.0) -> bool:
+    """Block until the tunnel reports 'connected', or give up. Used before a run
+    so recon doesn't scan a route that isn't up yet. Returns True iff connected."""
+    import time
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        s = status()["status"]
+        if s == "connected":
+            return True
+        if s in ("error", "down"):
+            return False
+        time.sleep(0.2)
+    return False
+
+
 def connect(config_path: str, sudo_password: str | None = None) -> dict:
     p = Path(config_path or "")
     if not config_path or not p.is_file():
@@ -73,28 +91,60 @@ def connect(config_path: str, sudo_password: str | None = None) -> dict:
         except Exception:
             pass
     with _LOCK:
-        _STATE.update(proc=proc, status="connecting", config=str(p), log=[], error=None)
+        # sudo_pw kept in memory only (never on disk/log) so disconnect() can
+        # elevate to kill the root-owned openvpn — same posture as privilege.py.
+        _STATE.update(proc=proc, status="connecting", config=str(p), log=[],
+                      error=None, sudo_pw=sudo_password)
     threading.Thread(target=_reader, args=(proc,), daemon=True).start()
+    _ensure_atexit_teardown()
     return {"ok": True, "status": "connecting"}
+
+
+def _ensure_atexit_teardown() -> None:
+    """Register disconnect() to run when the process exits, so closing the app
+    (desktop window close, or Ctrl-C on `atpt serve`) always tears the tunnel
+    down instead of orphaning a root openvpn. Registered once per process."""
+    global _ATEXIT_REGISTERED
+    if not _ATEXIT_REGISTERED:
+        atexit.register(disconnect)
+        _ATEXIT_REGISTERED = True
+
+
+def _elevated_kill(config: str) -> None:
+    """Terminate the running openvpn. It runs as root under sudo, so a plain
+    signal from this (unprivileged) process fails with EPERM — we must re-elevate.
+    Targets exactly our tunnel by its --config path. Uses the in-memory sudo
+    password captured at connect (falls back to `sudo -n` for NOPASSWD sudoers).
+    Never raises."""
+    with _LOCK:
+        pw = _STATE.get("sudo_pw")
+    pat = f"openvpn --config {config}"
+    if pw is not None:
+        argv, stdin = ["sudo", "-S", "-p", "", "pkill", "-TERM", "-f", pat], pw + "\n"
+    else:
+        argv, stdin = ["sudo", "-n", "pkill", "-TERM", "-f", pat], None
+    try:
+        subprocess.run(argv, input=stdin, capture_output=True, text=True, timeout=10)
+    except Exception:
+        pass
 
 
 def disconnect() -> dict:
     with _LOCK:
         proc = _STATE["proc"]
-    if not proc or proc.poll() is not None:
-        with _LOCK:
-            _STATE["status"] = "down"
-            _STATE["proc"] = None
-        return {"ok": True, "status": "down"}
-    try:
-        proc.terminate()
+        config = _STATE["config"]
+    # Best-effort direct terminate first (harmless; works only if we happen to
+    # own the process). openvpn runs as root under sudo, so this usually can't
+    # signal it and we fall through to the elevated kill below.
+    if proc and proc.poll() is None:
         try:
-            proc.wait(timeout=6)
+            proc.terminate()
+            proc.wait(timeout=3)
         except Exception:
-            proc.kill()
-    except Exception as exc:
-        return {"ok": False, "error": str(exc)}
+            pass
+    # The real teardown: re-elevate to kill the root-owned openvpn by config path.
+    if config:
+        _elevated_kill(config)
     with _LOCK:
-        _STATE["status"] = "down"
-        _STATE["proc"] = None
+        _STATE.update(status="down", proc=None, config=None, sudo_pw=None)
     return {"ok": True, "status": "down"}

@@ -197,5 +197,7 @@ def launch(host: str = "127.0.0.1") -> int:
             return 1
         open_window(f"http://{srv.host}:{srv.port}/")
     finally:
+        from . import vpn
+        vpn.disconnect()          # never leave a THM/lab tunnel up after the app closes
         srv.stop()
     return 0
