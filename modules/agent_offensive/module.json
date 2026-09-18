@@ -5,9 +5,9 @@
   "entrypoint": "module:AgentOffensive",
   "consumes": [],
   "provides": ["asset"],
-  "intrusive": true,
+  "intrusive": false,
   "run_modes": ["step", "semi", "full"],
   "enabled": true,
   "extracted_from": "atpt-native",
-  "description": "LLM-driven recon->exploit ReAct loop, opt-in via config.offensive_agent.enabled; every command passes the deterministic ScopeGuard (scope wall + allowlist + denylist). No-op when disabled."
+  "description": "LLM-driven recon->exploit ReAct loop, opt-in via config.offensive_agent.enabled. No-op when disabled (so it never gates a normal run). When enabled its human checkpoint is the startup scope-confirmation gate, and EVERY command passes the deterministic ScopeGuard (scope wall + allowlist + denylist) in every mode."
 }

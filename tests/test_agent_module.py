@@ -32,10 +32,13 @@ class ModuleTest(unittest.TestCase):
         self.assertEqual(res.assets, [])
         self.assertIn("disabled", res.summary)
 
-    def test_manifest_is_intrusive_recon(self):
+    def test_manifest_recon_and_not_engine_intrusive(self):
+        # Non-intrusive at the manifest level so a DISABLED agent never gates a
+        # normal run; its real gate is the startup scope-confirmation + the
+        # per-command ScopeGuard, not the engine's per-module pause.
         m = Manifest.from_file(Path("modules/agent_offensive/module.json"))
         self.assertEqual(m.phase, "recon")
-        self.assertTrue(m.intrusive)
+        self.assertFalse(m.intrusive)
 
     def test_enabled_drives_loop(self):
         class R:  # fake reasoner: one in-scope nmap then done
