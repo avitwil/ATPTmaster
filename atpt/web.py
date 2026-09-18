@@ -9,6 +9,7 @@ Binds to 127.0.0.1 by default — this is an operator console, not a public endp
 from __future__ import annotations
 import base64
 import copy
+import hashlib
 import importlib.util
 import json
 import os
@@ -19,6 +20,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 from . import models, privilege, providers, selfupdate, vpn
+from .config import offensive_agent_on
 from .engine import Orchestrator
 from .registry import discover
 from .state import SQLiteStore
@@ -84,6 +86,16 @@ def _derive_scope(scope: dict) -> dict:
     out["out_of_scope"] = sorted(set(d_out))
     out["out_of_scope_cidrs"] = sorted(set(c_out))
     return out
+
+
+def _scope_confirm_payload(scope: dict) -> dict:
+    """The normalized in-scope targets the offensive agent will operate against,
+    plus a stable hash. The run start returns this for a one-time human
+    confirmation (catches typos) before any action, in every mode."""
+    flat = _derive_scope(scope or {})
+    targets = sorted(set((flat.get("in_scope_cidrs") or []) + (flat.get("in_scope_domains") or [])))
+    h = hashlib.sha256("\n".join(targets).encode()).hexdigest()
+    return {"targets": targets, "hash": h}
 
 
 def _enabled_without_target(scope: dict) -> list:
@@ -445,6 +457,14 @@ class WebApp:
             return self._vpn_connect(store, eid, data)
         if path == "/api/run/start" and method == "POST":
             eng = store.get_engagement(eid)
+            # Startup scope confirmation (offensive agent): before ANY action, in
+            # every mode, the operator confirms the exact in-scope targets. Catches
+            # typos. Runs before the VPN gate so nothing connects until confirmed.
+            if offensive_agent_on(eng):
+                payload = _scope_confirm_payload(json.loads(eng.get("scope") or "{}"))
+                if data.get("scope_confirm") != payload["hash"]:
+                    return self._json(200, {"needs_scope_confirm": True, **payload,
+                        "message": "Confirm the exact in-scope targets before the agent runs."})
             cfg = json.loads(eng.get("config") or "{}")
             vpath = (cfg.get("ctf") or {}).get("vpn_config_path")
             if vpath and not vpn.is_up():
@@ -1191,10 +1211,16 @@ async function pollRun(){
 $('#runbtn').onclick=async()=>{
   if(!ENG){chat('sys','Create or select an engagement first (☰ menu → Scope).');return}
   const url='/api/run/start';const hdr={'Content-Type':'application/json'};
-  let r=await api(url,{method:'POST',headers:hdr,body:JSON.stringify({eng:ENG,mode:MODE})});
+  const body={eng:ENG,mode:MODE};
+  const post=()=>api(url,{method:'POST',headers:hdr,body:JSON.stringify(body)});
+  let r=await post();
+  if(r&&r.needs_scope_confirm){
+    const ok=confirm('The agent will operate ONLY against:\n\n'+(r.targets||[]).join('\n')+'\n\nProceed?');
+    if(!ok){chat('sys','Run cancelled — scope not confirmed.');return;}
+    body.scope_confirm=r.hash; r=await post(); }
   if(r&&r.needs_sudo){ const pw=prompt('sudo password (to bring up the VPN for this run):');
     if(!pw){chat('sys','Run cancelled — VPN needs a sudo password to start.');return;}
-    r=await api(url,{method:'POST',headers:hdr,body:JSON.stringify({eng:ENG,mode:MODE,sudo_password:pw})}); }
+    body.sudo_password=pw; r=await post(); }
   if(r&&r.error){chat('sys','⚠ '+esc(r.error));return;}
   chat('sys','▶ Run started (<b>'+MODE+'</b>)…'); setRunUI('running'); RUNBUSY=true; pollRun();
 };
