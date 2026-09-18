@@ -221,6 +221,14 @@ def _format_http_result(stdout, returncode, stderr, base_url) -> str:
             + (f": {detail}" if detail else "") + ")")
 
 
+def _content_type(headers) -> str:
+    if isinstance(headers, dict):
+        for k, v in headers.items():
+            if str(k).lower() == "content-type":
+                return str(v).lower()
+    return ""
+
+
 def _curl_args(base_url, payload, cookie_jar=None) -> list:
     """Build a curl argv from a (possibly loosely-typed) model payload. Every
     element is coerced to a string — a model may hand us a dict for `data`, an
@@ -239,9 +247,21 @@ def _curl_args(base_url, payload, cookie_jar=None) -> list:
     args.append(base_url + path)
     data = payload.get("data")
     if data not in (None, ""):
-        if not isinstance(data, str):
-            data = json.dumps(data)
-        args += ["-d", data]
+        if isinstance(data, dict):
+            # A structured body must MATCH its content-type. JSON-encoding a dict
+            # and sending it under curl's default form content-type produces a
+            # body that servers mis-parse (Express reads the whole JSON blob as
+            # one form key, leaving the real fields undefined) — which crashed a
+            # fragile target (XBEN-099: bcrypt(undefined) -> unhandled rejection
+            # -> Node exit). So: JSON body only when the caller asked for JSON;
+            # otherwise real application/x-www-form-urlencoded fields.
+            if "json" in _content_type(headers):
+                args += ["-d", json.dumps(data)]
+            else:
+                for k, v in data.items():
+                    args += ["--data-urlencode", f"{k}={v}"]
+        else:
+            args += ["-d", str(data)]
     return args
 
 

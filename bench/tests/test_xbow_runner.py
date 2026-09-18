@@ -57,13 +57,27 @@ class Executor(unittest.TestCase):
 
 
 class CurlArgs(unittest.TestCase):
-    def test_dict_data_is_json_encoded_and_all_str(self):
-        args = X._curl_args("http://t", {"path": "/p", "method": "post", "data": {"id": 2}})
+    def test_dict_data_no_ctype_is_form_urlencoded(self):
+        # A dict body with no content-type -> real form fields (browser-like),
+        # NOT a JSON blob under the default form content-type (which servers
+        # mis-parse and can crash — see XBEN-099).
+        args = X._curl_args("http://t", {"path": "/p", "method": "post",
+                                         "data": {"user": "a", "pw": "b"}})
         self.assertTrue(all(isinstance(a, str) for a in args))
         self.assertIn("http://t/p", args)
         self.assertIn("POST", args)                 # method upper-cased
+        self.assertNotIn("-d", args)                # not a raw JSON blob
+        self.assertIn("--data-urlencode", args)
+        self.assertIn("user=a", args)
+        self.assertIn("pw=b", args)
+
+    def test_dict_data_with_json_ctype_is_json_body(self):
+        args = X._curl_args("http://t", {"path": "/p", "method": "post",
+                                         "data": {"id": 2},
+                                         "headers": {"Content-Type": "application/json"}})
         i = args.index("-d")
-        self.assertEqual(args[i + 1], '{"id": 2}')  # dict serialized to JSON
+        self.assertEqual(args[i + 1], '{"id": 2}')  # JSON body when caller asks for JSON
+        self.assertNotIn("--data-urlencode", args)
 
     def test_str_data_passthrough(self):
         args = X._curl_args("http://t", {"path": "/", "data": "id=2"})
