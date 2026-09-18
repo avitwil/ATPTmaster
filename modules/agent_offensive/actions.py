@@ -39,14 +39,20 @@ def _iter_json_objects(text: str):
                 start = None
 
 
-def parse_action(text: str) -> "Action | None":
+def last_json(text: str):
+    """The last complete top-level JSON object in the text, or None."""
     obj = None
     for chunk in _iter_json_objects(text or ""):
         try:
             obj = json.loads(chunk)
         except Exception:
             continue
-    if not isinstance(obj, dict):
+    return obj if isinstance(obj, dict) else None
+
+
+def parse_action(text: str) -> "Action | None":
+    obj = last_json(text)
+    if obj is None:
         return None
     rationale = str(obj.get("rationale") or "")
     if obj.get("done"):
