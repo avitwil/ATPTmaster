@@ -1,17 +1,55 @@
 """ScopeGuard: the authoritative pre-execution gate. Deterministic first — the
 target of every command must be in scope (fail-closed), the binary must be
 allow-listed, and no write/egress flag may be present. An optional judge_fn (an
-LLM) may ADD a block, never remove one."""
+LLM) may ADD a block, never remove one.
+
+session_scope_ok vets a command run INSIDE a foothold session: all local activity
+is allowed; only an outbound connection (ssh/curl/nc/…) to an OUT-OF-SCOPE host is
+blocked (a pivot to an unauthorized machine). On a single-host engagement it never
+fires."""
 from __future__ import annotations
+import re
 from dataclasses import dataclass
 
 from atpt.scope import in_scope
 
 from .targets import extract_targets
 
+_EGRESS = frozenset({"ssh", "scp", "sftp", "curl", "wget", "nc", "ncat", "netcat",
+                     "telnet", "ftp", "tftp", "rsync", "socat"})
+_LOCAL = frozenset({"127.0.0.1", "localhost", "0.0.0.0", "::1", ""})
+_SUBSPLIT = re.compile(r"[;&|\n`]+|\$\(")
+_SKIP_PROG = frozenset({"sudo", "-n", "command", "exec", "nohup", "time", "env", "sh", "-c", "bash"})
+
+
+def session_scope_ok(cmd: str, scope: dict) -> tuple[bool, str]:
+    """Allow local commands; block only a network tool dialing an out-of-scope host."""
+    for sub in _SUBSPLIT.split(cmd or ""):
+        toks = sub.split()
+        i = 0
+        while i < len(toks) and ("=" in toks[i] or toks[i] in _SKIP_PROG):
+            i += 1
+        if i >= len(toks):
+            continue
+        prog = toks[i].split("/")[-1]
+        if prog in _EGRESS:
+            for h in extract_targets([prog] + toks[i + 1:]):
+                if h in _LOCAL:
+                    continue
+                if not in_scope(scope, h):
+                    return False, f"session pivot to out-of-scope host '{h}' via {prog}"
+    return True, ""
+
 DEFAULT_ALLOW = frozenset({
     "nmap", "curl", "httpx", "whatweb", "nikto", "gobuster", "ffuf",
     "wpscan", "nuclei", "dig", "whois"})
+
+# Exploitation tools — available to the agent by default (it only runs against an
+# authorized, in-scope target; the scope wall still vets every destination). More
+# can be added per engagement via config.offensive_agent.allow_bins.
+OFFENSIVE_ALLOW = frozenset({
+    "sqlmap", "hydra", "medusa", "wget", "nc", "ncat", "feroxbuster", "wfuzz",
+    "smbclient", "smbmap", "enum4linux", "crackmapexec", "redis-cli"})
 
 _DENY_ARGS = frozenset({
     "-o", "--output", "-O", "--upload-file", "--data-binary",

@@ -1,5 +1,12 @@
 """Parse the model's step output into a structured Action. Mirrors the robust
-last-JSON-object strategy proven in bench/actions.py."""
+last-JSON-object strategy proven in bench/actions.py. Action kinds:
+
+  command : run an external tool  -> {"command": ["nmap","-Pn","h"], ...}
+  listen  : arm the reverse-shell listener -> {"listen": {"port": 4444}}  (port optional)
+  session : run a command in the held shell -> {"session": "sudo -l"}
+  ssh     : open an SSH session -> {"ssh": {"host": "h", "user": "u"}}
+  done    : goal met -> {"done": true}
+"""
 from __future__ import annotations
 import json
 import shlex
@@ -8,7 +15,12 @@ from dataclasses import dataclass, field
 
 @dataclass
 class Action:
+    kind: str = "command"                 # command | listen | session | ssh | done
     argv: list[str] = field(default_factory=list)
+    session_cmd: str = ""
+    port: int = 0
+    ssh_host: str = ""
+    ssh_user: str = ""
     rationale: str = ""
     done: bool = False
 
@@ -36,8 +48,27 @@ def parse_action(text: str) -> "Action | None":
             continue
     if not isinstance(obj, dict):
         return None
+    rationale = str(obj.get("rationale") or "")
     if obj.get("done"):
-        return Action(argv=[], rationale=str(obj.get("rationale") or ""), done=True)
+        return Action(kind="done", rationale=rationale, done=True)
+    if obj.get("session") is not None:
+        return Action(kind="session", session_cmd=str(obj.get("session") or ""),
+                      rationale=rationale)
+    if obj.get("listen") is not None:
+        spec = obj.get("listen")
+        port = 0
+        if isinstance(spec, dict):
+            try:
+                port = int(spec.get("port") or 0)
+            except Exception:
+                port = 0
+        return Action(kind="listen", port=port, rationale=rationale)
+    if obj.get("ssh") is not None:
+        spec = obj.get("ssh") or {}
+        if isinstance(spec, dict):
+            return Action(kind="ssh", ssh_host=str(spec.get("host") or ""),
+                          ssh_user=str(spec.get("user") or ""), rationale=rationale)
+        return None
     cmd = obj.get("command")
     if isinstance(cmd, str):
         argv = shlex.split(cmd)
@@ -45,4 +76,4 @@ def parse_action(text: str) -> "Action | None":
         argv = [str(x) for x in cmd]
     else:
         return None
-    return Action(argv=argv, rationale=str(obj.get("rationale") or ""), done=False)
+    return Action(kind="command", argv=argv, rationale=rationale)

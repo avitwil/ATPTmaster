@@ -5,7 +5,7 @@ import json
 
 from atpt.module import Module, ModuleResult
 
-from .guard import ScopeGuard, DEFAULT_ALLOW
+from .guard import ScopeGuard, DEFAULT_ALLOW, OFFENSIVE_ALLOW
 from .loop import run_loop
 from .executor import execute, harvest
 
@@ -18,7 +18,7 @@ class AgentOffensive(Module):
         if ctx.dry_run:
             return ModuleResult(planned=["agent_offensive: would drive an LLM scan/exploit loop"],
                                 summary="dry-run: offensive agent planned")
-        allow = set(DEFAULT_ALLOW) | set(cfg.get("allow_bins", []) or [])
+        allow = set(DEFAULT_ALLOW) | set(OFFENSIVE_ALLOW) | set(cfg.get("allow_bins", []) or [])
         guard = ScopeGuard(ctx.scope, allow)   # judge_fn deferred (Phase 2)
         max_steps = int(cfg.get("max_steps", 20))
         step_timeout = int(cfg.get("step_timeout", 300))
@@ -27,8 +27,8 @@ class AgentOffensive(Module):
             ctx.emit(kind, message, level=level, phase="exploit", module=self.id, data=data)
 
         assets, findings, summary = run_loop(
-            goal=ctx.goals or "Enumerate and assess the in-scope target(s).",
-            guard=guard, reason_fn=lambda p: ctx.reason(p, "exploit"),
+            goal=ctx.goals or "Capture the flags on the in-scope target(s).",
+            guard=guard, scope=ctx.scope, reason_fn=lambda p: ctx.reason(p, "exploit"),
             max_steps=max_steps, emit=emit,
             execute_fn=lambda argv: execute(argv, timeout=step_timeout),
             harvest_fn=harvest)

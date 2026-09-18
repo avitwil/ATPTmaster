@@ -25,6 +25,30 @@ class ActionsTest(unittest.TestCase):
     def test_garbage_is_none(self):
         self.assertIsNone(parse_action("no json here"))
 
+    def test_command_kind(self):
+        a = parse_action('{"command": ["id"]}')
+        self.assertEqual(a.kind, "command")
+
+    def test_session_action(self):
+        a = parse_action('reasoning\n{"session": "sudo -l", "rationale": "privesc check"}')
+        self.assertEqual(a.kind, "session")
+        self.assertEqual(a.session_cmd, "sudo -l")
+
+    def test_listen_action_with_port(self):
+        a = parse_action('{"listen": {"port": 4444}}')
+        self.assertEqual(a.kind, "listen")
+        self.assertEqual(a.port, 4444)
+
+    def test_listen_action_no_port(self):
+        a = parse_action('{"listen": true}')
+        self.assertEqual(a.kind, "listen")
+        self.assertEqual(a.port, 0)
+
+    def test_ssh_action(self):
+        a = parse_action('{"ssh": {"host": "10.1.1.5", "user": "web"}}')
+        self.assertEqual(a.kind, "ssh")
+        self.assertEqual((a.ssh_host, a.ssh_user), ("10.1.1.5", "web"))
+
 
 if __name__ == "__main__":
     unittest.main()

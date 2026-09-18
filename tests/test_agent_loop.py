@@ -63,6 +63,67 @@ class LoopTest(unittest.TestCase):
             harvest_fn=lambda a, r: ([], []), halt_fn=lambda: True)
         self.assertIn("stopped", summary.lower())
 
+    def test_session_captures_flag(self):
+        import modules.agent_offensive.loop as L
+        scripted = iter([
+            '{"listen": {"port": 4444}}',
+            '{"session": "cat /home/web/user.txt"}',
+            '{"done": true}',
+        ])
+
+        class FakeSess:
+            def start_listener(self, port, scope=None):
+                return {"ok": True, "listen": "192.168.141.21:4444"}
+
+            def is_active(self):
+                return True
+
+            def wait_caught(self, t):
+                return True
+
+            def session_exec(self, cmd, timeout=45):
+                return "flag{user_flag_captured}"
+
+        orig = L.sess
+        L.sess = FakeSess()
+        try:
+            assets, findings, summary = run_loop(
+                goal="x", guard=guard(), scope=SCOPE, reason_fn=lambda p: next(scripted),
+                max_steps=6, emit=lambda *a, **k: None,
+                execute_fn=lambda argv: {"rc": 0, "out": "", "err": ""},
+                harvest_fn=lambda a, r: ([], []))
+        finally:
+            L.sess = orig
+        self.assertTrue(any(f["evidence"]["flag"] == "flag{user_flag_captured}" for f in findings))
+        self.assertIn("done", summary.lower())
+
+    def test_session_pivot_blocked_nonfatal(self):
+        import modules.agent_offensive.loop as L
+        scripted = iter(['{"session": "ssh 10.9.9.9"}', '{"done": true}'])
+        events = []
+
+        class FakeSess:
+            def is_active(self):
+                return True
+
+            def wait_caught(self, t):
+                return True
+
+            def session_exec(self, cmd, timeout=45):
+                return "SHOULD NOT RUN"
+
+        orig = L.sess
+        L.sess = FakeSess()
+        try:
+            _, _, summary = run_loop(
+                goal="x", guard=guard(), scope=SCOPE, reason_fn=lambda p: next(scripted),
+                max_steps=4, emit=lambda *a, **k: events.append(a),
+                execute_fn=lambda argv: {}, harvest_fn=lambda a, r: ([], []))
+        finally:
+            L.sess = orig
+        self.assertTrue(any("blocked" in str(e).lower() for e in events))
+        self.assertIn("done", summary.lower())
+
     def test_no_reasoner_ends(self):
         assets, findings, summary = run_loop(
             goal="x", guard=guard(), reason_fn=lambda _: None, max_steps=5,
