@@ -213,6 +213,19 @@ class WebTest(unittest.TestCase):
         cfg = json.loads(SQLiteStore(self.db).get_engagement("c1")["config"] or "{}")
         self.assertFalse(cfg.get("offensive_agent", {}).get("enabled"))
 
+    def test_update_engagement_preserves_config(self):
+        mk = {"engagement": "u1", "mode": "semi",
+              "scope": {"domains": {"web": {"enabled": True, "in": ["a.com"]}}}}
+        self.app.handle("POST", "/api/engagement", {}, json.dumps(mk).encode())
+        # set OSINT context (a top-level config key) via CTF settings
+        self.app.handle("POST", "/api/settings/ctf", {"eng": "u1"},
+                        json.dumps({"osint_context": "keep me"}).encode())
+        # re-save the SAME engagement through the create/update form
+        self.app.handle("POST", "/api/engagement", {}, json.dumps(mk).encode())
+        cfg = json.loads(SQLiteStore(self.db).get_engagement("u1")["config"])
+        self.assertEqual(cfg.get("osint", {}).get("context"), "keep me")   # survived the re-save
+        self.assertTrue(cfg["offensive_agent"]["enabled"])                 # engine still set
+
     def test_findings_expose_narrative_evidence(self):
         store = SQLiteStore(self.db)
         store.create_engagement("e1", "E1", {"in_scope_domains": ["e1.com"]},

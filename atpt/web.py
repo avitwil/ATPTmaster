@@ -559,8 +559,12 @@ class WebApp:
         if path == "/api/scope/chat" and method == "POST":
             from modules.agent_scope.agent import build_prompt, extract_proposed_scope
             rf = self._scope_reason_fn(eid)
-            reply = rf(build_prompt(data.get("typed_scope"), data.get("messages") or [])) if rf else ""
-            reply = reply or ""
+            reply = ""
+            if rf:
+                try:
+                    reply = rf(build_prompt(data.get("typed_scope"), data.get("messages") or [])) or ""
+                except Exception:
+                    reply = ""
             return self._json(200, {"reply": reply, "proposed_scope": extract_proposed_scope(reply)})
         if path == "/api/scope/apply" and method == "POST":
             # SAFETY: same validation as engagement creation (never a weaker check);
@@ -586,7 +590,9 @@ class WebApp:
             return self._json(400, {"error": err})
         store = self._store()
         engine = (data.get("engine") or "director")
-        config = {"offensive_agent": {"enabled": engine != "classic"}}
+        existing = store.get_engagement(eid)
+        config = json.loads(existing["config"]) if existing and existing.get("config") else {}
+        config["offensive_agent"] = {"enabled": engine != "classic"}
         store.create_engagement(eid, data.get("name") or eid, scope, f"{eid}.scope.json",
                                 data.get("mode") or "semi", config)
         store.add_event(eid, "scope", None, "info", "engagement_init",
