@@ -692,7 +692,7 @@ git commit -m "feat(web): director is the default engine for new engagements + v
 
 **Interfaces:**
 - Consumes: Task 3's `store.list_events(eid)`; Task 2's role-aware `ctx.reason(..., role="report")`; existing `build_report_md(store, eid, project_dir)` and its deterministic Executive-Summary/Methodology sections.
-- Produces: `build_report_md(store, eid, project_dir, reason_fn=None)`. When `reason_fn` returns valid Markdown containing `## Executive Summary`, those two sections come from the LLM; otherwise (None/empty/error) the deterministic sections render exactly as today. `test_report_author.py`'s 3-arg calls keep working (default `reason_fn=None`).
+- Produces: `build_report_md(store, eid, project_dir, reason_fn=None)`. When `reason_fn` returns valid Markdown containing `## Executive Summary`, those two sections come from the LLM; otherwise (None/empty/error) the deterministic sections render exactly as today. `test_report_author.py`'s 3-arg calls keep working (default `reason_fn=None`). Also renders the director's per-finding narrative (What it is / How it was proven / Impact) and prefers `evidence.remediation` over the OWASP default, and coerces `cvss` to float-or-None so a non-numeric director cvss never crashes the sort/render.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -713,6 +713,19 @@ Append to `tests/test_report.py` (it builds `self.store` + engagement; adapt ids
     def test_template_fallback_when_reason_fn_returns_none(self):
         md = self.build(self.store, self.eid, self.pd, reason_fn=lambda p: None)
         self.assertIn("Phases executed", md)
+
+    def test_renders_director_narrative_and_prefers_its_remediation(self):
+        self.store.upsert_finding(self.eid, {
+            "title": "SQLi in /login", "severity": "high", "status": "validated",
+            "source_tool": "agent-director", "cvss": "high",   # non-numeric on purpose
+            "evidence": {"asset_value": "http://t/login", "description": "boolean-blind SQLi",
+                         "reproduction": "curl ...' OR 1=1-- -> 200 vs 500", "impact": "auth bypass",
+                         "remediation": "use parameterized queries", "confidence": "confirmed"}})
+        md = self.build(self.store, self.eid, self.pd)   # must NOT crash on non-numeric cvss
+        self.assertIn("boolean-blind SQLi", md)          # description rendered
+        self.assertIn("curl ...' OR 1=1", md)            # reproduction rendered
+        self.assertIn("auth bypass", md)                 # impact rendered
+        self.assertIn("use parameterized queries", md)   # director remediation, not OWASP default
 ```
 
 (If `tests/test_report.py` does not already expose `self.build`, `self.eid`, `self.pd`, add them in its `setUp` mirroring `tests/test_report_author.py`: `self.build = <importlib-loaded build_report_md>`, `self.eid = "<its engagement id>"`, `self.pd = <project dir Path>`.)
@@ -812,16 +825,50 @@ and change the `/api/report` handler (line ~454):
                                         reason_fn=self._report_reason_fn(eid))
 ```
 
-- [ ] **Step 5: Run the report tests (including the pre-existing author tests)**
+- [ ] **Step 5: Render the director's narrative fields + coerce cvss safely**
+
+Director-authored findings (Task 4) carry their narrative inside `evidence` and MAY set a non-numeric `cvss` (e.g. `"high"`). Two changes to `build_report_md`'s per-finding path in `modules/report_ptes/module.py`:
+
+(a) **Coerce cvss** so the sort key and CVSS line never crash on a non-numeric value. Add a top-level helper:
+
+```python
+def _cvss_num(f):
+    try:
+        return float(f.get("cvss"))
+    except (TypeError, ValueError):
+        return None
+```
+
+Use it in the sort key (replace `-(f.get("cvss") or 0)` with `-(_cvss_num(f) or 0)`) and set `cvss = _cvss_num(f)` where the per-finding CVSS line is built.
+
+(b) **Render the narrative + prefer the director's remediation.** In the per-finding loop, after the existing `- **Affected:**` / `- **Evidence:**` lines, add:
+
+```python
+        if ev.get("description"):
+            L.append(f"- **What it is:** {ev['description']}")
+        if ev.get("reproduction"):
+            L.append(f"- **How it was proven:** {ev['reproduction']}")
+        if ev.get("impact"):
+            L.append(f"- **Impact:** {ev['impact']}")
+```
+
+and change the remediation line to prefer the director's own remediation over the OWASP-keyed default:
+
+```python
+        rem = ev.get("remediation") or _REMEDIATION.get(str(owasp).split()[0] if owasp else "", _DEFAULT_REMEDIATION)
+        L.append(f"- **Remediation:** {rem}")
+```
+
+- [ ] **Step 6: Run the report tests (including the pre-existing author tests)**
 
 Run: `python3 -m unittest tests.test_report tests.test_report_author tests.test_report_custom -v`
 Expected: PASS — the LLM path is used only with a valid `reason_fn`; `test_report_author.py`'s 3-arg calls fall to the template.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add modules/report_ptes/module.py atpt/web.py tests/test_report.py
-git commit -m "feat(report): LLM-authored exec summary + methodology from the real transcript; template fallback"
+git commit -m "feat(report): LLM-authored narrative + rendered per-finding director analysis; cvss-safe; template fallback"
 ```
 
 ---
