@@ -341,6 +341,20 @@ class WebApp:
             self._rb = _load_report_builder(self.project_dir)
         return self._rb
 
+    def _report_reason_fn(self, eid):
+        store = self._store()
+        eng = store.get_engagement(eid) or {}
+        cfg = json.loads(eng.get("config") or "{}")
+        rc = cfg.get("reasoning") or (store.get_settings() or {}).get("reasoning")
+        if not rc:
+            return None
+        from .reasoning import ReasoningLadder
+        ladder = ReasoningLadder(rc)
+        def rf(prompt):
+            res = ladder.reason(prompt, "report", role="report")
+            return res.text if res else None
+        return rf
+
     _ASSETS = {"logo.png": "image/png", "clilogo.png": "image/png"}
 
     def _serve_asset(self, path):
@@ -451,7 +465,8 @@ class WebApp:
         if path == "/api/chat" and method == "POST":
             return self._chat(store, eid, data.get("message", ""))
         if path == "/api/report" and method == "GET":
-            md = self._report_builder()(store, eid, self.project_dir)
+            md = self._report_builder()(store, eid, self.project_dir,
+                                        reason_fn=self._report_reason_fn(eid))
             return (200, "text/markdown; charset=utf-8", md.encode(),
                     {"Content-Disposition": f'attachment; filename="{eid}-ptes-report.md"'})
         if path == "/api/settings/ctf":

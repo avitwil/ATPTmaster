@@ -23,6 +23,31 @@ _REMEDIATION = {
 }
 _DEFAULT_REMEDIATION = "Review against vendor guidance and remediate; re-test after the fix."
 
+_NARRATIVE_PROMPT = (
+    "You are writing a penetration-test report from a REAL engagement. Using the "
+    "findings and the run transcript below, output EXACTLY two Markdown sections and "
+    "nothing else:\n"
+    "## Executive Summary\n(3-6 sentences: what was tested, what was found, the business risk)\n"
+    "## Methodology\n(a short narrative of what was actually done on THIS engagement)\n\n"
+    "Findings:\n{findings}\n\nRun transcript:\n{transcript}\n")
+
+_TRANSCRIPT_KINDS = {"agent_step", "agent_session", "agent_finding", "agent_flag", "agent_blocked"}
+
+
+def _run_transcript(store, eid: str) -> str:
+    if not hasattr(store, "list_events"):
+        return ""
+    lines = [f"- {e.get('kind')}: {e.get('message')}"
+             for e in store.list_events(eid) if e.get("kind") in _TRANSCRIPT_KINDS]
+    return "\n".join(lines[-80:])
+
+
+def _cvss_num(f):
+    try:
+        return float(f.get("cvss"))
+    except (TypeError, ValueError):
+        return None
+
 
 def _load_evidence(f: dict) -> dict:
     ev = f.get("evidence")
@@ -42,7 +67,7 @@ def _sev_counts(findings: list[dict]) -> dict:
     return out
 
 
-def build_report_md(store, eid: str, project_dir: Path) -> str:
+def build_report_md(store, eid: str, project_dir: Path, reason_fn=None) -> str:
     eng = store.get_engagement(eid) or {"id": eid, "name": eid, "scope": "{}"}
     scope = json.loads(eng.get("scope") or "{}")
     all_findings = store.list_findings(eid)
@@ -53,7 +78,7 @@ def build_report_md(store, eid: str, project_dir: Path) -> str:
                 if f.get("status") != "false_positive"
                 and rep.get(str(f.get("id")), {}).get("include", True)]
     reported.sort(key=lambda f: (_SEV_ORDER.get((f.get("severity") or "info").lower(), 9),
-                                 -(f.get("cvss") or 0)))
+                                 -(_cvss_num(f) or 0)))
     assets = store.list_assets(eid)
     counts = _sev_counts(reported)
     validated = sum(1 for f in reported if f.get("status") == "validated")
@@ -76,25 +101,38 @@ def build_report_md(store, eid: str, project_dir: Path) -> str:
     L.append(f"- **Standard:** PTES · CVSS · OWASP Top 10")
     L.append("")
 
-    L.append("## Executive Summary")
-    L.append("")
-    if reported:
-        sev_line = ", ".join(f"{counts[s]} {s}" for s in
-                             sorted(counts, key=lambda s: _SEV_ORDER.get(s, 9)))
-        L.append(f"The assessment identified **{len(reported)} finding(s)** "
-                 f"({sev_line}); **{validated} validated**. "
-                 f"Reconnaissance enumerated {len(assets)} in-scope asset(s).")
+    narrative = None
+    if reason_fn is not None:
+        fsum = "\n".join(f"- {f.get('title')} [{(f.get('severity') or 'info')}]"
+                         for f in reported) or "- (none)"
+        try:
+            narrative = reason_fn(_NARRATIVE_PROMPT.format(
+                findings=fsum, transcript=_run_transcript(store, eid)))
+        except Exception:
+            narrative = None
+    if narrative and "## Executive Summary" in narrative:
+        L.append(narrative.strip())
+        L.append("")
     else:
-        L.append("No findings were reported for this engagement.")
-    L.append("")
+        L.append("## Executive Summary")
+        L.append("")
+        if reported:
+            sev_line = ", ".join(f"{counts[s]} {s}" for s in
+                                 sorted(counts, key=lambda s: _SEV_ORDER.get(s, 9)))
+            L.append(f"The assessment identified **{len(reported)} finding(s)** "
+                     f"({sev_line}); **{validated} validated**. "
+                     f"Reconnaissance enumerated {len(assets)} in-scope asset(s).")
+        else:
+            L.append("No findings were reported for this engagement.")
+        L.append("")
 
-    L.append("## Methodology")
-    L.append("")
-    L.append("Phases executed: scope → recon → map (attack-surface routing) → "
-             "exploit → validate (verification-first) → report. Findings below are "
-             "derived from discovered assets, triaged by confidence, and — where "
-             "marked validated — confirmed by the verification stage.")
-    L.append("")
+        L.append("## Methodology")
+        L.append("")
+        L.append("Phases executed: scope → recon → map (attack-surface routing) → "
+                 "exploit → validate (verification-first) → report. Findings below are "
+                 "derived from discovered assets, triaged by confidence, and — where "
+                 "marked validated — confirmed by the verification stage.")
+        L.append("")
 
     L.append("## Findings")
     L.append("")
@@ -104,7 +142,7 @@ def build_report_md(store, eid: str, project_dir: Path) -> str:
         ev = _load_evidence(f)
         sev = (f.get("severity") or "info").lower()
         owasp = f.get("owasp") or "—"
-        cvss = f.get("cvss")
+        cvss = _cvss_num(f)
         L.append(f"### {i}. {f.get('title') or 'Untitled finding'}")
         L.append("")
         L.append(f"- **Severity:** {sev}  |  **Status:** {f.get('status') or 'candidate'}")
@@ -112,7 +150,13 @@ def build_report_md(store, eid: str, project_dir: Path) -> str:
         affected = ev.get("asset_value") or (f.get("source_tool") or "—")
         L.append(f"- **Affected:** `{affected}`")
         L.append(f"- **Evidence:** `{json.dumps(ev, ensure_ascii=False)}`")
-        rem = _REMEDIATION.get(str(owasp).split()[0] if owasp else "", _DEFAULT_REMEDIATION)
+        if ev.get("description"):
+            L.append(f"- **What it is:** {ev['description']}")
+        if ev.get("reproduction"):
+            L.append(f"- **How it was proven:** {ev['reproduction']}")
+        if ev.get("impact"):
+            L.append(f"- **Impact:** {ev['impact']}")
+        rem = ev.get("remediation") or _REMEDIATION.get(str(owasp).split()[0] if owasp else "", _DEFAULT_REMEDIATION)
         L.append(f"- **Remediation:** {rem}")
         rc = rep.get(str(f.get("id")), {})
         if rc.get("note"):
@@ -137,7 +181,8 @@ def build_report_md(store, eid: str, project_dir: Path) -> str:
 class ReportPTES(Module):
     def run(self, ctx) -> ModuleResult:
         eid = ctx.engagement["id"]
-        md = build_report_md(ctx.store, eid, ctx.project_dir)
+        rf = None if ctx.dry_run else (lambda p: ctx.reason(p, "report", role="report"))
+        md = build_report_md(ctx.store, eid, ctx.project_dir, reason_fn=rf)
         out = Path(ctx.project_dir) / "var" / "reports" / f"{eid}.md"
         if ctx.dry_run:
             ctx.emit("dry_run", f"[report] would write PTES report ({len(md)} bytes) to {out}",
