@@ -355,6 +355,36 @@ class WebApp:
             return res.text if res else None
         return rf
 
+    def _scope_reason_fn(self, eid):
+        store = self._store()
+        eng = store.get_engagement(eid) or {}
+        cfg = json.loads(eng.get("config") or "{}")
+        rc = cfg.get("reasoning") or (store.get_settings() or {}).get("reasoning")
+        if not rc:
+            return None
+        from .reasoning import ReasoningLadder
+        ladder = ReasoningLadder(rc)
+        def rf(prompt):
+            res = ladder.reason(prompt, "scope", role="scope")
+            return res.text if res else None
+        return rf
+
+    def _validate_scope_payload(self, raw_scope):
+        """Same validation as engagement creation: derive the flat scope, refuse an
+        enabled-but-empty category (would silently mean "the whole domain"), and
+        require at least one concrete in-scope target. Shared by `_create_engagement`
+        and `/api/scope/apply` so the scope agent can never write a weaker-checked
+        scope than a fresh engagement would accept."""
+        scope = _derive_scope(raw_scope or {})
+        empty = _enabled_without_target(raw_scope or {})
+        if empty:
+            return None, (f"selected scope {'categories' if len(empty) > 1 else 'category'} "
+                          f"{', '.join(empty)} need a target — supply an in-scope host/IP/CIDR "
+                          f"(or deselect it); a blank category is not scanned as the full domain")
+        if not (scope.get("in_scope_domains") or scope.get("in_scope_cidrs")):
+            return None, "scope must define at least one in-scope domain or CIDR (target required)"
+        return scope, None
+
     _ASSETS = {"logo.png": "image/png", "clilogo.png": "image/png"}
 
     def _serve_asset(self, path):
@@ -526,25 +556,34 @@ class WebApp:
             store.set_mode(eid, mode)
             store.add_event(eid, None, None, "info", "mode_set", f"mode set to {mode} via UI", None)
             return self._json(200, {"ok": True, "mode": mode})
+        if path == "/api/scope/chat" and method == "POST":
+            from modules.agent_scope.agent import build_prompt, extract_proposed_scope
+            rf = self._scope_reason_fn(eid)
+            reply = rf(build_prompt(data.get("typed_scope"), data.get("messages") or [])) if rf else ""
+            reply = reply or ""
+            return self._json(200, {"reply": reply, "proposed_scope": extract_proposed_scope(reply)})
+        if path == "/api/scope/apply" and method == "POST":
+            # SAFETY: same validation as engagement creation (never a weaker check);
+            # this only writes the engagement's scope — the deterministic startup
+            # scope-confirmation gate in /api/run/start still runs before any scanning.
+            scope, err = self._validate_scope_payload(data.get("scope") or {})
+            if err:
+                return self._json(400, {"error": err})
+            store.set_scope(eid, scope)
+            store.add_event(eid, "scope", None, "info", "scope_set",
+                            "scope written via scope agent (pending startup confirmation)", None)
+            return self._json(200, {"scope": scope})
 
         return self._json(404, {"error": "no such route"})
 
     def _create_engagement(self, data):
         eid = (data.get("engagement") or "").strip()
-        raw_scope = data.get("scope") or {}
-        scope = _derive_scope(raw_scope)
-        has_target = bool(scope.get("in_scope_domains") or scope.get("in_scope_cidrs"))
         if not valid_eid(eid):
             return self._json(400, {"error": "engagement id must be 1-64 chars of [A-Za-z0-9_-]"})
-        # A selected (enabled) scope category with no input must NOT be treated as
-        # "the whole domain" — require the user to supply a concrete target for it.
-        empty = _enabled_without_target(raw_scope)
-        if empty:
-            return self._json(400, {"error": f"selected scope {'categories' if len(empty) > 1 else 'category'} "
-                                    f"{', '.join(empty)} need a target — supply an in-scope host/IP/CIDR "
-                                    f"(or deselect it); a blank category is not scanned as the full domain"})
-        if not has_target:
-            return self._json(400, {"error": "scope must define at least one in-scope domain or CIDR (target required)"})
+        raw_scope = data.get("scope") or {}
+        scope, err = self._validate_scope_payload(raw_scope)
+        if err:
+            return self._json(400, {"error": err})
         store = self._store()
         engine = (data.get("engine") or "director")
         config = {"offensive_agent": {"enabled": engine != "classic"}}

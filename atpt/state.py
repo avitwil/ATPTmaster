@@ -101,6 +101,10 @@ class SQLiteStore:
         self.cx.execute("UPDATE engagements SET mode=? WHERE id=?", (mode, eid))
         self.cx.commit()
 
+    def set_scope(self, eid, scope: dict):
+        self.cx.execute("UPDATE engagements SET scope=? WHERE id=?", (json.dumps(scope), eid))
+        self.cx.commit()
+
     def update_engagement_config(self, eid, patch: dict):
         """Deep-merge `patch` into the engagement's config JSON."""
         r = self.cx.execute("SELECT config FROM engagements WHERE id=?", (eid,)).fetchone()

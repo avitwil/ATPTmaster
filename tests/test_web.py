@@ -238,3 +238,32 @@ class WebTest(unittest.TestCase):
         st, _, gb, _ = self.app.handle("GET", "/api/report-settings", {"eng": "e1"}, b"")
         got = json.loads(gb)["findings"][str(fid)]["screenshots"]
         self.assertEqual(got, ["/tmp/a.png"])
+
+    def test_scope_apply_writes_valid_scope(self):
+        store = SQLiteStore(self.db)
+        store.create_engagement("e1", "E1", {"in_scope_domains": ["old.com"]},
+                                "e1.scope.json", "semi", {})
+        body = json.dumps({"scope": {"domains": {"web": {"enabled": True, "in": ["new.com"]}}}}).encode()
+        st, _, _, _ = self.app.handle("POST", "/api/scope/apply", {"eng": "e1"}, body)
+        self.assertEqual(st, 200)
+        sc = json.loads(SQLiteStore(self.db).get_engagement("e1")["scope"])
+        self.assertIn("new.com", sc.get("in_scope_domains", []))
+
+    def test_scope_apply_rejects_empty_target(self):
+        store = SQLiteStore(self.db)
+        store.create_engagement("e1", "E1", {"in_scope_domains": ["old.com"]},
+                                "e1.scope.json", "semi", {})
+        body = json.dumps({"scope": {"domains": {"web": {"enabled": True, "in": []}}}}).encode()
+        st, _, _, _ = self.app.handle("POST", "/api/scope/apply", {"eng": "e1"}, body)
+        self.assertEqual(st, 400)
+
+    def test_scope_chat_returns_shape(self):
+        store = SQLiteStore(self.db)
+        store.create_engagement("e1", "E1", {"in_scope_domains": ["t.com"]},
+                                "e1.scope.json", "semi", {})
+        body = json.dumps({"typed_scope": {"in_scope_domains": ["t.com"]}, "messages": []}).encode()
+        st, _, b, _ = self.app.handle("POST", "/api/scope/chat", {"eng": "e1"}, body)
+        self.assertEqual(st, 200)
+        d = json.loads(b)
+        self.assertIn("reply", d)
+        self.assertIn("proposed_scope", d)
