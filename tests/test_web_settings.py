@@ -254,3 +254,15 @@ class WebSettingsTest(unittest.TestCase):
         ui = json.loads(body)["user_info"]
         self.assertEqual(ui["name"], "Avi")
         self.assertEqual(ui["company"], "Acme")
+
+    # --- per-role model ladders ------------------------------------------------
+    def test_reasoning_roles_persist_and_return(self):
+        body = {"reasoning": {
+            "providers": {"p1": {"backend": "cli", "cmd": "echo"}},
+            "ladder": [{"provider": "p1"}],
+            "roles": {"director": {"ladder": [{"provider": "p1", "model": "m1"}]}}}}
+        self.app.handle("POST", "/api/settings", {}, json.dumps(body).encode())
+        st, _, gb, _ = self.app.handle("GET", "/api/settings", {}, b"")
+        got = json.loads(gb).get("reasoning", {})
+        self.assertIn("director", got.get("roles", {}))
+        self.assertEqual(got["roles"]["director"]["ladder"][0]["model"], "m1")

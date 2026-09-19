@@ -1073,6 +1073,8 @@ pre.out{background:var(--field);border:1px solid var(--edge);border-radius:6px;p
             <label>exploit policy<select id="pol_exploit"><option>any</option><option>hosted_ok</option><option>local_only</option></select></label>
             <label>report policy<select id="pol_report"><option>any</option><option>hosted_ok</option><option>local_only</option></select></label>
           </div>
+          <div class="hint" style="margin-top:16px">Per-role overrides — leave a role on the global ladder above, or switch it to Custom and give it its own ordered ladder (drawn from the same configured providers).</div>
+          <div id="roleLadders"></div>
         </div>
         <div class="panel hidden" data-panel="report">
           <div class="hint">Customize the PTES report: untick findings to exclude, add your own note (mitigation/impact) and screenshot file paths per finding.</div>
@@ -1357,6 +1359,11 @@ $('#engsel').onchange=async()=>{ENG=$('#engsel').value;syncMode();await refreshA
 
 /* ===== Settings ===== */
 let SET={}, HTTP=[], SUB=[], OLLAMA=[], PREF=[], PSTATUS={}, MODELS={}, LADDER=[];
+let ROLE_LADDERS={}, ROLE_CUSTOM={};
+const ROLE_ORDER=['director','osint','active_recon','skill','scope','map','exploit','report'];
+const ROLE_LABELS={director:'Director',osint:'OSINT / passive recon',active_recon:'Active recon',
+  skill:'Skill distiller',scope:'Scope agent',map:'Map/PTT enricher',exploit:'Exploit proposer',
+  report:'Report author/manager'};
 function applyTheme(mode){ // 'system' | 'light' | 'dark'
   const el=document.documentElement;
   if(mode==='light'||mode==='dark') el.setAttribute('data-theme',mode);
@@ -1383,9 +1390,97 @@ function decompose(){
   if(!LADDER.length && PREF.length) LADDER=PREF.map(n=>({provider:n,model:(provs[n]||{}).model||'',effort:''}));
   const pol=r.policy||{};
   $('#pol_map').value=pol.map||'any';$('#pol_exploit').value=pol.exploit||'any';$('#pol_report').value=pol.report||'any';
+  decomposeRoles();
 }
 function allNames(){return [...HTTP,...SUB,...OLLAMA].map(p=>p.name).filter(Boolean);}
 function reconcileLadder(){const names=allNames();LADDER=LADDER.filter(e=>names.includes(e.provider));}
+
+/* ---- per-role model ladders (role left unset falls back to the global ladder) ---- */
+function decomposeRoles(){
+  const roles=(SET.reasoning||{}).roles||{};
+  ROLE_LADDERS={};ROLE_CUSTOM={};
+  ROLE_ORDER.forEach(role=>{
+    const rl=(roles[role]||{}).ladder;
+    if(Array.isArray(rl)&&rl.length){
+      ROLE_LADDERS[role]=rl.map(e=>({provider:e.provider,model:e.model||'',effort:e.effort||''}));
+      ROLE_CUSTOM[role]=true;
+    } else {
+      ROLE_LADDERS[role]=[];
+      ROLE_CUSTOM[role]=false;
+    }
+  });
+}
+function reconcileRoleLadders(){const names=allNames();
+  ROLE_ORDER.forEach(role=>{ROLE_LADDERS[role]=(ROLE_LADDERS[role]||[]).filter(e=>names.includes(e.provider));});
+}
+function roleLadderRow(role,i){
+  const list=ROLE_LADDERS[role]||[]; const e=list[i];
+  return `<li><span class="nm">${i+1}. <b>${esc(e.provider)}</b>${e.model?' · '+esc(e.model):''}${e.effort?' <span class="badge">'+esc(e.effort)+'</span>':''}</span>
+    <button class="ghost rl_up" data-role="${esc(role)}" data-i="${i}" ${i===0?'disabled':''}>↑</button>
+    <button class="ghost rl_down" data-role="${esc(role)}" data-i="${i}" ${i===list.length-1?'disabled':''}>↓</button>
+    <button class="ghost rl_del" data-role="${esc(role)}" data-i="${i}">✕</button></li>`;
+}
+function fillRoleModelOptions(role){
+  const provSel=document.querySelector(`.rl_prov[data-role="${role}"]`);
+  const modelSel=document.querySelector(`.rl_model[data-role="${role}"]`);
+  if(!provSel||!modelSel)return;
+  const prov=provSel.value;
+  let list=MODELS[prov]; if(!list){ const st=PSTATUS[prov]; if(st&&st.models&&st.models.length)list=st.models; }
+  if(!list){ modelSel.innerHTML='<option value="">— fetch in Models tab —</option>'; return; }
+  modelSel.innerHTML='<option value="">(default)</option>'+list.map(m=>`<option value="${esc(m)}">${esc(m)}</option>`).join('');
+}
+function renderRoleLadders(){
+  reconcileRoleLadders();
+  const box=$('#roleLadders'); if(!box)return;
+  const names=allNames();
+  const provOpts=names.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join('')||'<option value="">(configure a provider first)</option>';
+  box.innerHTML=ROLE_ORDER.map(role=>{
+    const custom=!!ROLE_CUSTOM[role]; const list=ROLE_LADDERS[role]||[];
+    return `<div class="prow" data-role="${esc(role)}" style="grid-template-columns:1fr;border-top:1px solid var(--edge);padding-top:10px;margin-top:10px">
+      <div class="toggle"><input type="checkbox" class="rl_toggle" data-role="${esc(role)}" ${custom?'':'checked'}>
+        <label style="color:var(--fg)"><b>${esc(ROLE_LABELS[role]||role)}</b> — ${custom?'<span class="badge">Custom</span>':'Use global ladder'}</label></div>
+      <div class="rl_body ${custom?'':'hidden'}" data-role="${esc(role)}">
+        <ul class="ladder">${list.map((e,i)=>roleLadderRow(role,i)).join('')||'<div class=hint>No models yet — add one below.</div>'}</ul>
+        <div class="prow" style="grid-template-columns:1fr 1fr auto auto;align-items:end">
+          <label>Provider<select class="rl_prov" data-role="${esc(role)}">${provOpts}</select></label>
+          <label>Model<select class="rl_model" data-role="${esc(role)}"><option value="">(default)</option></select></label>
+          <label>Effort<select class="rl_effort" data-role="${esc(role)}"><option value="">effort —</option><option>minimal</option><option>low</option><option>medium</option><option>high</option></select></label>
+          <button class="ghost rl_add" data-role="${esc(role)}">+ Add model</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+  wireRoleLadders();
+  ROLE_ORDER.forEach(role=>{ if(ROLE_CUSTOM[role]) fillRoleModelOptions(role); });
+}
+function wireRoleLadders(){
+  const box=$('#roleLadders'); if(!box)return;
+  box.querySelectorAll('.rl_toggle').forEach(cb=>cb.onchange=()=>{
+    const role=cb.dataset.role, custom=!cb.checked;
+    ROLE_CUSTOM[role]=custom;
+    if(!custom) ROLE_LADDERS[role]=[];   // reverting to global drops any custom entries
+    renderRoleLadders();
+  });
+  box.querySelectorAll('.rl_prov').forEach(s=>s.onchange=()=>fillRoleModelOptions(s.dataset.role));
+  box.querySelectorAll('.rl_up').forEach(b=>b.onclick=()=>{
+    const role=b.dataset.role,i=+b.dataset.i,list=ROLE_LADDERS[role];
+    [list[i],list[i-1]]=[list[i-1],list[i]]; renderRoleLadders();});
+  box.querySelectorAll('.rl_down').forEach(b=>b.onclick=()=>{
+    const role=b.dataset.role,i=+b.dataset.i,list=ROLE_LADDERS[role];
+    [list[i],list[i+1]]=[list[i+1],list[i]]; renderRoleLadders();});
+  box.querySelectorAll('.rl_del').forEach(b=>b.onclick=()=>{
+    const role=b.dataset.role,i=+b.dataset.i;
+    ROLE_LADDERS[role].splice(i,1); renderRoleLadders();});
+  box.querySelectorAll('.rl_add').forEach(b=>b.onclick=()=>{
+    const role=b.dataset.role;
+    const prov=document.querySelector(`.rl_prov[data-role="${role}"]`).value;
+    if(!prov)return;
+    const model=document.querySelector(`.rl_model[data-role="${role}"]`).value||'';
+    const effort=document.querySelector(`.rl_effort[data-role="${role}"]`).value||'';
+    (ROLE_LADDERS[role]=ROLE_LADDERS[role]||[]).push({provider:prov,model,effort});
+    renderRoleLadders();
+  });
+}
 
 function httpRow(p,i){return `<div class="prow" data-i="${i}" data-kind="http" style="grid-template-columns:1fr 1fr">
   <label>Name<input class="f_name" value="${esc(p.name)}"></label>
@@ -1518,7 +1613,7 @@ function renderModelList(models){
 
 function showTab(t){document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('on',x.dataset.tab===t));
   document.querySelectorAll('.panel').forEach(x=>x.classList.toggle('hidden',x.dataset.panel!==t));
-  if(t==='ladder')renderLadder(); if(t==='models')renderModels(); if(t==='scope')loadScope(); if(t==='report')loadReport(); if(t==='update')checkUpdate();}
+  if(t==='ladder'){renderLadder();renderRoleLadders();} if(t==='models')renderModels(); if(t==='scope')loadScope(); if(t==='report')loadReport(); if(t==='update')checkUpdate();}
 async function loadReport(){
   const box=$('#rp_findings');
   if(!ENG){box.innerHTML='<span class=hint>Select an engagement first.</span>';return;}
@@ -1555,7 +1650,7 @@ $('#bk_file')&&($('#bk_file').onchange=async e=>{ const f=e.target.files[0]; if(
   let obj; try{ obj=JSON.parse(await f.text()); }catch(err){ $('#bk_msg').textContent='⚠ not valid JSON'; return; }
   const r=await api('/api/settings/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({settings:obj})});
   if(r.error){ $('#bk_msg').textContent='⚠ '+esc(r.error); return; }
-  SET=r; await loadStatuses(); decompose(); renderProviders(); renderLadder();
+  SET=r; await loadStatuses(); decompose(); renderProviders(); renderLadder(); renderRoleLadders();
   $('#ui_name').value=(SET.user_info||{}).name||''; $('#ui_company').value=(SET.user_info||{}).company||'';
   $('#ui_phone').value=(SET.user_info||{}).phone||''; $('#ui_email').value=(SET.user_info||{}).email||'';
   $('#bk_msg').textContent='Loaded ✓'; setTimeout(()=>$('#bk_msg').textContent='',2000);
@@ -1600,7 +1695,7 @@ async function openSettings(tab){
   $('#s_sudo').checked=!!SET.sudo_allowed;$('#sudoPwWrap').classList.toggle('hidden',!SET.sudo_allowed);
   $('#a_theme').value=themePref();
   $('#a_mode').value=MODE;
-  renderProviders();renderLadder();
+  renderProviders();renderLadder();renderRoleLadders();
   await loadCtf();
   await loadToolbox();
   showTab(tab||'userinfo');
@@ -1615,15 +1710,18 @@ function providersMap(){
   return m;
 }
 $('#setsave').onclick=async()=>{
-  syncFromDom();reconcileLadder();
+  syncFromDom();reconcileLadder();reconcileRoleLadders();
   const pref=[]; LADDER.forEach(e=>{if(!pref.includes(e.provider))pref.push(e.provider);});  // compat
   const reasoning={providers:providersMap(),ladder:LADDER,preference:pref,
-    policy:{map:$('#pol_map').value,exploit:$('#pol_exploit').value,report:$('#pol_report').value}};
+    policy:{map:$('#pol_map').value,exploit:$('#pol_exploit').value,report:$('#pol_report').value},
+    roles: Object.fromEntries(Object.entries(ROLE_LADDERS)
+        .filter(([role,l])=>l && l.length)
+        .map(([role,l])=>[role,{ladder:l}]))};
   const name=$('#ui_name').value.trim();
   const user_info={name,company:$('#ui_company').value.trim(),phone:$('#ui_phone').value.trim(),email:$('#ui_email').value.trim()};
   const body={user_info,pentester_name:name,sudo_allowed:$('#s_sudo').checked,reasoning};
   const r=await api('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  SET=r;decompose();renderProviders();
+  SET=r;decompose();renderProviders();renderLadder();renderRoleLadders();
   $('#setmsg').textContent='Saved ✓';setTimeout(()=>$('#setmsg').textContent='',1500);
 };
 $('#a_theme').onchange=()=>{const v=$('#a_theme').value;applyTheme(v);try{localStorage.setItem('atpt_theme',v);}catch(e){}};
