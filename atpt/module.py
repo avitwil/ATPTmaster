@@ -68,12 +68,12 @@ class RunContext:
              data: dict | None = None) -> None:
         self.store.add_event(self.engagement["id"], phase, module, level, kind, message, data)
 
-    def reason(self, prompt: str, phase: str) -> "str | None":
+    def reason(self, prompt: str, phase: str, role: str | None = None) -> "str | None":
         if self.reasoner is None:
             return None
         if self.goals:
             prompt = f"Engagement goals: {self.goals}\n\n{prompt}"
-        res = self.reasoner.reason(prompt, phase)
+        res = self.reasoner.reason(prompt, phase, role)
         return res.text if res else None
 
 

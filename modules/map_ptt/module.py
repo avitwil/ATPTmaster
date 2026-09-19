@@ -60,7 +60,7 @@ class MapPTT(Module):
                 {"assets": summary,
                  "candidates": [{"asset_id": c["asset_id"], "title": c["title"]}
                                 for c in cands]})
-            text = ctx.reason(prompt, phase="map")
+            text = ctx.reason(prompt, phase="map", role="map")
             if not text:
                 return cands
             extra = json.loads(text[text.index("["): text.rindex("]") + 1])

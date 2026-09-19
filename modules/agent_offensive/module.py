@@ -53,12 +53,13 @@ class AgentOffensive(Module):
 
         def distill_fn(goal, transcript):
             return distill(goal=goal, transcript=transcript,
-                           reason_fn=lambda p: ctx.reason(p, "exploit"),
+                           reason_fn=lambda p: ctx.reason(p, "exploit", role="skill"),
                            substitutions=subs, provenance=prov)
 
         assets, findings, summary = run_loop(
             goal=ctx.goals or "Capture the flags on the in-scope target(s).",
-            guard=guard, scope=ctx.scope, reason_fn=lambda p: ctx.reason(p, "exploit"),
+            guard=guard, scope=ctx.scope,
+            reason_fn=lambda p: ctx.reason(p, "exploit", role="director"),
             max_steps=max_steps, emit=emit,
             execute_fn=lambda argv: execute(argv, timeout=step_timeout),
             harvest_fn=harvest, toolbox=toolbox, distill_fn=distill_fn)

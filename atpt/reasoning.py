@@ -18,6 +18,8 @@ REFUSAL_MARKERS = (
     "against my guidelines", "cannot comply", "can't comply",
 )
 
+ROLES = ("director", "osint", "active_recon", "skill", "scope", "map", "exploit", "report")
+
 
 def _is_refusal(text: str) -> bool:
     t = (text or "").strip().lower()
@@ -150,28 +152,39 @@ class ReasoningLadder:
         self.preference: list = cfg.get("preference", [])
         self.ladder: list = cfg.get("ladder") or []   # [{provider, model, effort}]
         self.policy: dict = cfg.get("policy", {})
+        self.roles: dict = cfg.get("roles", {}) or {}
         self._emit = emit or (lambda *a, **k: None)
 
-    def _allowed(self, provider_cfg: dict, phase: str) -> bool:
-        pol = self.policy.get(phase, "any")
+    def _allowed(self, provider_cfg: dict, phase: str, policy: dict) -> bool:
+        pol = (policy or {}).get(phase, "any")
         if pol == "local_only":
             return provider_cfg.get("backend") == "ollama"
         return True  # "any" / "hosted_ok" / unknown -> permit
 
-    def _entries(self):
+    def _resolve(self, role):
+        """Per-role override of the (ladder, preference, policy) triple, falling
+        back to the global config when the role is unset, unknown, or malformed."""
+        rc = self.roles.get(role) if role else None
+        if isinstance(rc, dict):
+            return (rc.get("ladder") or [], rc.get("preference") or [],
+                    rc.get("policy") or self.policy)
+        return self.ladder, self.preference, self.policy
+
+    def _entries(self, ladder, preference):
         """Yield (provider, model_override, effort). Prefer the model-based ladder;
         fall back to the plain provider preference list for older configs."""
-        if self.ladder:
-            for e in self.ladder:
+        if ladder:
+            for e in ladder:
                 yield e.get("provider"), e.get("model"), e.get("effort")
         else:
-            for name in self.preference:
+            for name in preference:
                 yield name, None, None
 
-    def reason(self, prompt: str, phase: str) -> "ReasoningResult | None":
-        for provider, model, effort in self._entries():
+    def reason(self, prompt: str, phase: str, role: str | None = None) -> "ReasoningResult | None":
+        ladder, preference, policy = self._resolve(role)
+        for provider, model, effort in self._entries(ladder, preference):
             pc = self.providers.get(provider)
-            if not pc or not self._allowed(pc, phase):
+            if not pc or not self._allowed(pc, phase, policy):
                 continue
             backend = BACKENDS.get(pc.get("backend"))
             if backend is None:

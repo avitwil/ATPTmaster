@@ -14,7 +14,7 @@ class _RecordingLadder:
     def __init__(self):
         self.prompt = None
 
-    def reason(self, prompt, phase):
+    def reason(self, prompt, phase, role=None):
         self.prompt = prompt
         return ReasoningResult(text="ok", provider="p")
 

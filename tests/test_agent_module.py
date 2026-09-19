@@ -50,7 +50,7 @@ class ModuleTest(unittest.TestCase):
             def __init__(self):
                 self.it = iter(['{"command":["nmap","-Pn","10.1.1.5"]}', '{"done":true}'])
 
-            def reason(self, prompt, phase):
+            def reason(self, prompt, phase, role=None):
                 class Res:
                     text = next(self.it)
                 return Res()
@@ -76,7 +76,7 @@ class _Reasoner:
     def __init__(self, steps):
         self._it = iter(steps)
 
-    def reason(self, prompt, phase):
+    def reason(self, prompt, phase, role=None):
         class R:
             text = next(self._it)
         return R()

@@ -90,3 +90,36 @@ class LadderTest(unittest.TestCase):
         finally:
             reasoning.urllib.request.urlopen = orig
         self.assertNotIn("reasoning_effort", json.loads(captured[0].data.decode()))
+
+
+ROLE_CFG = {
+    "providers": {"p1": {"backend": "fake"}, "p2": {"backend": "fake"}},
+    "ladder": [{"provider": "p1"}],
+    "roles": {"report": {"ladder": [{"provider": "p2"}]}},
+}
+
+
+class RoleLadderTest(unittest.TestCase):
+    def setUp(self):
+        self._saved = dict(reasoning.BACKENDS)
+        reasoning.BACKENDS.clear()
+        reasoning.BACKENDS["fake"] = lambda cfg, p: f"OK:{cfg.get('_who','?')}"
+
+    def tearDown(self):
+        reasoning.BACKENDS.clear(); reasoning.BACKENDS.update(self._saved)
+
+    def test_role_override_uses_own_ladder(self):
+        # tag each provider so we can see which one answered
+        reasoning.BACKENDS["fake"] = lambda cfg, p: "ANS"
+        L = ReasoningLadder(ROLE_CFG)
+        self.assertEqual(L.reason("hi", "report", role="report").provider, "p2")
+
+    def test_role_without_override_uses_global(self):
+        self.assertEqual(ReasoningLadder(ROLE_CFG).reason("hi", "map", role="map").provider, "p1")
+
+    def test_unknown_role_falls_back_to_global(self):
+        self.assertEqual(ReasoningLadder(ROLE_CFG).reason("hi", "map", role="bogus").provider, "p1")
+
+    def test_no_roles_key_is_global(self):
+        cfg = {"providers": {"p1": {"backend": "fake"}}, "ladder": [{"provider": "p1"}]}
+        self.assertEqual(ReasoningLadder(cfg).reason("hi", "map").provider, "p1")
