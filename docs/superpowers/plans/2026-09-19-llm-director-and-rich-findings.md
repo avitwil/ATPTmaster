@@ -1433,6 +1433,89 @@ git commit -m "docs(readme): LLM director default, rich findings + detail view, 
 
 ---
 
+### Task 14: OSINT context input — make the OSINT phase reachable (Item 8 completion)
+
+**Files:**
+- Modify: `atpt/web.py` (CTF panel textarea; `_get_ctf` returns it; `_save_ctf` persists it to `config.osint.context`; loadCtf/saveCtf JS)
+- Modify: `README.md` (name where to set the OSINT context)
+- Test: `tests/test_web_settings.py`
+
+**Interfaces:**
+- Consumes: Task 10's `_osint_summary` (reads `config.osint.context`); existing `_get_ctf`/`_save_ctf`/`update_engagement_config`; the CTF settings panel + its loadCtf/saveCtf JS.
+- Produces: an "OSINT context / challenge page" textarea in Settings→CTF that persists to `config.osint.context` (top-level, mirroring how `_save_ctf` stores `offensive_agent`), so the passive OSINT phase (Task 10) actually has input. `_get_ctf` returns `osint` for pre-fill.
+
+- [ ] **Step 1: Write the failing test** — append to `tests/test_web_settings.py` (mirror its setUp: `WebApp(".", db_path=self.db)`; import `SQLiteStore`):
+
+```python
+    def test_ctf_saves_osint_context(self):
+        import json as _j
+        self.app.handle("POST", "/api/engagement", {}, _j.dumps({
+            "engagement": "o1", "mode": "semi",
+            "scope": {"domains": {"web": {"enabled": True, "in": ["t.com"]}}}}).encode())
+        self.app.handle("POST", "/api/settings/ctf", {"eng": "o1"},
+                        _j.dumps({"osint_context": "Challenge: login form, hint admin/admin"}).encode())
+        cfg = _j.loads(SQLiteStore(self.db).get_engagement("o1")["config"])
+        self.assertEqual(cfg["osint"]["context"], "Challenge: login form, hint admin/admin")
+        st, _, gb, _ = self.app.handle("GET", "/api/settings/ctf", {"eng": "o1"}, b"")
+        self.assertEqual(_j.loads(gb).get("osint", {}).get("context"), "Challenge: login form, hint admin/admin")
+```
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `python3 -m unittest tests.test_web_settings -v`
+Expected: FAIL — `_save_ctf` ignores `osint_context` and `_get_ctf` returns no `osint`.
+
+- [ ] **Step 3: Implement the backend**
+
+In `atpt/web.py` `_get_ctf`, before `return ctf` add:
+
+```python
+        ctf["osint"] = cfg.get("osint") or {}
+```
+
+In `_save_ctf`, after the `offensive_agent` block (before `return`), add:
+
+```python
+        if "osint_context" in data:
+            store.update_engagement_config(eid, {"osint": {"context": str(data.get("osint_context") or "")}})
+```
+
+- [ ] **Step 4: Add the CTF-panel field + JS wiring**
+
+In the CTF panel HTML (`data-panel="ctf"`), after the Goals `<label>` add:
+
+```html
+          <label class="hint full">OSINT context / challenge page — text the passive-recon (OSINT) phase reasons over<textarea id="c_osint" rows="4" placeholder="Paste the THM/HTB challenge page, or any known public info about the target"></textarea></label>
+```
+
+In `loadCtf` (where it fills `#c_goals` from the GET response `c`), add:
+
+```javascript
+  $('#c_osint').value=(c.osint||{}).context||'';
+```
+
+In `saveCtf` (the body it POSTs to `/api/settings/ctf`), add `osint_context:$('#c_osint').value` to the payload object.
+
+- [ ] **Step 5: Run to verify pass**
+
+Run: `python3 -m unittest tests.test_web_settings -v`
+Expected: PASS.
+
+- [ ] **Step 6: Name the field in the README**
+
+In `README.md`, extend the OSINT sentence to point operators to the field, e.g. append: "— paste it in **☰ → Scope → CTF / engagement → OSINT context**."
+
+- [ ] **Step 7: Full suite green + commit**
+
+Run: `python3 -m pytest -q tests/` (expect green).
+
+```bash
+git add atpt/web.py README.md tests/test_web_settings.py
+git commit -m "feat(web): OSINT context input in CTF settings — feeds the passive-recon phase (completes Item 8)"
+```
+
+---
+
 ## Self-Review
 
 **Spec coverage:**
