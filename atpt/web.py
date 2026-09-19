@@ -717,6 +717,7 @@ class WebApp:
         ctf = dict(cfg.get("ctf") or {})
         ctf["attackbox_has_password"] = privilege.has_attackbox_password(eid)
         ctf["offensive_agent"] = cfg.get("offensive_agent") or {}
+        ctf["osint"] = cfg.get("osint") or {}
         return ctf
 
     def _save_ctf(self, store, eid, data):
@@ -754,6 +755,8 @@ class WebApp:
             if bins:
                 agent["allow_bins"] = bins
             store.update_engagement_config(eid, {"offensive_agent": agent})
+        if "osint_context" in data:
+            store.update_engagement_config(eid, {"osint": {"context": str(data.get("osint_context") or "")}})
         return self._json(200, self._get_ctf(store, eid))
 
     def _chat(self, store, eid, message):
@@ -1060,6 +1063,7 @@ pre.out{background:var(--field);border:1px solid var(--edge);border-radius:6px;p
         <div class="panel hidden" data-panel="ctf">
           <div class="hint" id="ctfEng">Applies to the selected engagement.</div>
           <label class="hint full">Goals — what the LLM should look for<textarea id="c_goals" rows="3" placeholder="e.g. find user.txt and root.txt; enumerate web + SSH"></textarea></label>
+          <label class="hint full">OSINT context / challenge page — text the passive-recon (OSINT) phase reasons over<textarea id="c_osint" rows="4" placeholder="Paste the THM/HTB challenge page, or any known public info about the target"></textarea></label>
           <div class="toggle full"><input type="checkbox" id="c_agent">
             <label for="c_agent"><b>LLM offensive agent</b> — let the AI drive scan/exploit commands per target
             (scope-enforced in every mode; you confirm targets before it runs)</label></div>
@@ -1829,10 +1833,10 @@ $('#addOllama').onclick=()=>{syncFromDom();OLLAMA.push({name:'',model:'llama3.1'
 
 async function loadCtf(){
   $('#ctfEng').textContent=ENG?('Applies to engagement: '+ENG):'Select or create an engagement first.';
-  ['#c_goals','#c_vpn','#c_ab_host','#c_ab_user','#c_ab_pw','#c_ab_key'].forEach(s=>$(s).value='');
+  ['#c_goals','#c_osint','#c_vpn','#c_ab_host','#c_ab_user','#c_ab_pw','#c_ab_key'].forEach(s=>$(s).value='');
   if(!ENG)return;
   const c=await api('/api/settings/ctf?eng='+encodeURIComponent(ENG));
-  $('#c_goals').value=c.goals||'';$('#c_vpn').value=c.vpn_config_path||'';
+  $('#c_goals').value=c.goals||'';$('#c_osint').value=(c.osint||{}).context||'';$('#c_vpn').value=c.vpn_config_path||'';
   const ab=c.attackbox||{};$('#c_ab_host').value=ab.host||'';$('#c_ab_user').value=ab.user||'';$('#c_ab_key').value=ab.key_path||'';
   $('#c_ab_pw').placeholder=c.attackbox_has_password?'•••••• set this session':'••••••••';
   const oa=c.offensive_agent||{};$('#c_agent').checked=!!oa.enabled;
@@ -1841,7 +1845,7 @@ async function loadCtf(){
 }
 $('#ctfSave').onclick=async()=>{
   if(!ENG){$('#ctfMsg').textContent='no engagement selected';return;}
-  const body={goals:$('#c_goals').value,vpn_config_path:$('#c_vpn').value.trim(),
+  const body={goals:$('#c_goals').value,osint_context:$('#c_osint').value,vpn_config_path:$('#c_vpn').value.trim(),
     attackbox:{host:$('#c_ab_host').value.trim(),user:$('#c_ab_user').value.trim(),
                password:$('#c_ab_pw').value,key_path:$('#c_ab_key').value.trim()},
     offensive_agent:{enabled:$('#c_agent').checked,max_steps:parseInt($('#c_agent_steps').value)||20,

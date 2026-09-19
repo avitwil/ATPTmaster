@@ -147,7 +147,9 @@ library and the same scope wall.
 **Recon runs in two phases.** A passive **OSINT** expert reasons only over context
 you provide for the engagement — for a TryHackMe/HackTheBox box that's the
 challenge-page text, since there's no public footprint to research — before
-**active recon** enumerates in-scope hosts, exactly as before.
+**active recon** enumerates in-scope hosts, exactly as before. Paste that context in
+**☰ → Scope → CTF / engagement → OSINT context / challenge page**; leave it empty and
+the OSINT phase stays a no-op, as before.
 
 **Findings are authored, not just harvested.** When the Director concludes something
 is a real issue, it writes it up as a first-class **finding** — title, severity,

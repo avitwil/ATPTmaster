@@ -112,6 +112,18 @@ class WebSettingsTest(unittest.TestCase):
         from atpt.config import offensive_agent_on
         self.assertTrue(offensive_agent_on(SQLiteStore(self.dbpath).get_engagement("htb1")))
 
+    def test_ctf_saves_osint_context(self):
+        import json as _j
+        self.app.handle("POST", "/api/engagement", {}, _j.dumps({
+            "engagement": "o1", "mode": "semi",
+            "scope": {"domains": {"web": {"enabled": True, "in": ["t.com"]}}}}).encode())
+        self.app.handle("POST", "/api/settings/ctf", {"eng": "o1"},
+                        _j.dumps({"osint_context": "Challenge: login form, hint admin/admin"}).encode())
+        cfg = _j.loads(SQLiteStore(self.dbpath).get_engagement("o1")["config"])
+        self.assertEqual(cfg["osint"]["context"], "Challenge: login form, hint admin/admin")
+        st, _, gb, _ = self.app.handle("GET", "/api/settings/ctf", {"eng": "o1"}, b"")
+        self.assertEqual(_j.loads(gb).get("osint", {}).get("context"), "Challenge: login form, hint admin/admin")
+
     def test_ctf_attackbox_password_not_persisted(self):
         self._mk_eng()
         self._post("/api/settings/ctf",
