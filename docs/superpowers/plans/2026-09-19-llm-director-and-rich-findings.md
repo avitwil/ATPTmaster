@@ -169,7 +169,7 @@ git commit -m "fix(reasoning): fall back on error-shaped responses (exit0/200), 
 
 **Interfaces:**
 - Consumes: Task 1's `reason()`; the config shape `{providers, ladder, preference, policy}`.
-- Produces: `atpt.reasoning.ROLES = ("director","skill","scope","map","exploit","report")`; `ReasoningLadder.reason(prompt, phase, role=None)`; `RunContext.reason(prompt, phase, role=None)`. `role=None` and a missing `reasoning.roles` key both resolve to the global ladder (backward-compatible). `providers` are always shared top-level.
+- Produces: `atpt.reasoning.ROLES = ("director","osint","active_recon","skill","scope","map","exploit","report")`; `ReasoningLadder.reason(prompt, phase, role=None)`; `RunContext.reason(prompt, phase, role=None)`. `role=None` and a missing `reasoning.roles` key both resolve to the global ladder (backward-compatible). `providers` are always shared top-level.
 
 - [ ] **Step 1: Write the failing tests (ladder)**
 
@@ -219,7 +219,7 @@ Expected: FAIL — `reason()` currently takes no `role` argument (TypeError).
 In `atpt/reasoning.py` add near the top (after `REFUSAL_MARKERS`):
 
 ```python
-ROLES = ("director", "skill", "scope", "map", "exploit", "report")
+ROLES = ("director", "osint", "active_recon", "skill", "scope", "map", "exploit", "report")
 ```
 
 In `ReasoningLadder.__init__`, after `self.policy = cfg.get("policy", {})` add:
@@ -941,7 +941,7 @@ If needed, in `_redact_settings` (and/or `_preserve_reasoning_keys`) make sure t
 
 - [ ] **Step 4: Add the per-role UI + include `roles` in the save payload**
 
-In `atpt/web.py`, below the existing global ladder editor block (the `#ladder` UI), add a per-role section that lists `director / skill / scope / map / exploit / report` (label `report` as "Report author/manager", `scope` as "Scope judge (advisory)"). Each role defaults to a "Use global ladder" checkbox; when unchecked ("Custom"), show a ladder editor scoped to that role reusing the same provider list. Maintain a JS `ROLE_LADDERS` object (role → `[{provider,model,effort}]`) populated from `SET.reasoning.roles` on load.
+In `atpt/web.py`, below the existing global ladder editor block (the `#ladder` UI), add a per-role section that lists `director / osint / active_recon / skill / scope / map / exploit / report` (label `report` as "Report author/manager", `scope` as "Scope agent", `osint` as "OSINT / passive recon", `active_recon` as "Active recon"). Each role defaults to a "Use global ladder" checkbox; when unchecked ("Custom"), show a ladder editor scoped to that role reusing the same provider list. Maintain a JS `ROLE_LADDERS` object (role → `[{provider,model,effort}]`) populated from `SET.reasoning.roles` on load.
 
 At the save site (~line 1532) where `const reasoning={providers:providersMap(),ladder:LADDER,preference:pref, …}` is built, add:
 
@@ -967,7 +967,398 @@ git commit -m "feat(web): per-role model-ladder editor in Settings (global + per
 
 ---
 
-### Task 9: Full-suite green + docs
+### Task 10: OSINT phase — passive-recon expert (Item 8)
+
+**Files:**
+- Modify: `modules/agent_offensive/loop.py` (add `intel=""` param; seed the transcript)
+- Modify: `modules/agent_offensive/module.py` (`_osint_summary` helper; run it before `run_loop`; pass its output as `intel`)
+- Test: `tests/test_agent_loop.py`, `tests/test_agent_module.py`
+
+**Interfaces:**
+- Consumes: Task 2 role `osint`; `run_loop(...)`; `ctx.reason(prompt, phase, role="osint")`.
+- Produces: `run_loop(..., intel="")` seeds the transcript with an `OSINT INTEL (passive recon):` block; `modules.agent_offensive.module._osint_summary(ctx, emit) -> str` runs an OSINT expert (phase `recon`, role `osint`) over operator context in `config.osint.context` (for THM/HTB the challenge-page text/URL), emits `agent_osint`, and its output is passed as `intel`. Recon is now two phases: passive OSINT → the active loop. (A fully separate active-recon agent is a possible follow-up; for now the loop's active recon runs under the director.)
+
+- [ ] **Step 1: Write the failing test (loop intel)** — append to `tests/test_agent_loop.py` inside `LoopTest`:
+
+```python
+    def test_intel_seeds_transcript(self):
+        seen = {}
+        def rf(prompt):
+            seen["p"] = prompt
+            return '{"done": true}'
+        run_loop(goal="x", guard=guard(), reason_fn=rf, max_steps=1,
+                 emit=lambda *a, **k: None,
+                 execute_fn=lambda a, timeout=300: {"rc": 0, "out": "", "err": ""},
+                 harvest_fn=lambda a, r: ([], []), intel="target runs WordPress 6.1")
+        self.assertIn("OSINT INTEL", seen["p"])
+        self.assertIn("WordPress 6.1", seen["p"])
+```
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `python3 -m unittest tests.test_agent_loop.LoopTest.test_intel_seeds_transcript -v`
+Expected: FAIL — `run_loop()` has no `intel` keyword.
+
+- [ ] **Step 3: Implement the loop seed**
+
+In `modules/agent_offensive/loop.py`, add `intel=""` to the `run_loop` signature (after `distill_fn=None`), and right after `assets, findings, transcript = [], [], []` add:
+
+```python
+    if intel:
+        transcript.append(f"OSINT INTEL (passive recon):\n{intel}")
+```
+
+- [ ] **Step 4: Run to verify pass**
+
+Run: `python3 -m unittest tests.test_agent_loop.LoopTest.test_intel_seeds_transcript -v`
+Expected: PASS.
+
+- [ ] **Step 5: Write the failing test (OSINT helper)** — append to `tests/test_agent_module.py`:
+
+```python
+    def test_osint_summary_uses_context_and_osint_role(self):
+        import json
+        from modules.agent_offensive.module import _osint_summary
+
+        class _Ctx:
+            engagement = {"id": "e", "config": json.dumps(
+                {"osint": {"context": "Challenge page: login form, hint admin/admin"}})}
+            scope = {"in_scope_domains": ["t.com"]}
+            goals = "capture flags"
+            def reason(self, prompt, phase, role=None):
+                self.seen = (phase, role, prompt)
+                return "LEAD: try admin/admin on the login form"
+
+        ctx = _Ctx(); events = []
+        out = _osint_summary(ctx, lambda *a, **k: events.append(a))
+        self.assertIn("admin/admin", out)
+        self.assertEqual(ctx.seen[0], "recon")
+        self.assertEqual(ctx.seen[1], "osint")
+        self.assertIn("Challenge page", ctx.seen[2])
+```
+
+- [ ] **Step 6: Run to verify failure**
+
+Run: `python3 -m unittest tests.test_agent_module -v`
+Expected: FAIL — no `_osint_summary`.
+
+- [ ] **Step 7: Implement the OSINT helper + wire it**
+
+In `modules/agent_offensive/module.py` add (module level):
+
+```python
+_OSINT_PROMPT = (
+    "You are an OSINT / passive-reconnaissance expert. Using ONLY the context below "
+    "(do not probe the target), summarise what is publicly known that helps the "
+    "engagement goal: technologies, versions, endpoints, usernames/emails, credentials, "
+    "and likely weak points. Be concise. If the context is a CTF challenge page, extract "
+    "EVERY hint.\n\nGoal: {goal}\nIn-scope: {scope}\n\nContext:\n{context}\n")
+
+
+def _osint_summary(ctx, emit) -> str:
+    cfg = (json.loads(ctx.engagement.get("config") or "{}").get("osint") or {})
+    context = str(cfg.get("context") or "").strip() or "(no OSINT context provided)"
+    text = (ctx.reason(_OSINT_PROMPT.format(
+        goal=ctx.goals or "(none stated)", scope=json.dumps(ctx.scope), context=context),
+        "recon", role="osint") or "").strip()
+    if text:
+        emit("agent_osint", f"[agent] OSINT (passive recon) summary ({len(text)} chars)")
+    return text
+```
+
+In `AgentOffensive.run`, immediately before the `run_loop(...)` call add `intel = _osint_summary(ctx, emit)` and pass `intel=intel` into `run_loop(...)`.
+
+- [ ] **Step 8: Run to verify pass**
+
+Run: `python3 -m unittest tests.test_agent_loop tests.test_agent_module -v`
+Expected: PASS.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add modules/agent_offensive/loop.py modules/agent_offensive/module.py tests/test_agent_loop.py tests/test_agent_module.py
+git commit -m "feat(agent): OSINT passive-recon phase (role osint) feeds the director loop"
+```
+
+---
+
+### Task 11: Conversational scope agent — backend (Item 9)
+
+**Files:**
+- Create: `modules/agent_scope/__init__.py`, `modules/agent_scope/agent.py`
+- Modify: `atpt/state.py` (`set_scope`)
+- Modify: `atpt/web.py` (`_validate_scope_payload` refactor; `_scope_reason_fn`; `/api/scope/chat`, `/api/scope/apply`)
+- Test: `tests/test_agent_scope.py`, `tests/test_web.py`
+
+**Interfaces:**
+- Consumes: Task 2 role `scope`; existing `_derive_scope`, `_enabled_without_target`, `WebApp.handle`, `SQLiteStore`, the `_report_reason_fn` pattern from Task 6.
+- Produces: `modules.agent_scope.agent.build_prompt(typed_scope, convo) -> str` and `extract_proposed_scope(text) -> dict|None`; `SQLiteStore.set_scope(eid, scope: dict)`; `POST /api/scope/chat` → `{reply, proposed_scope}`; `POST /api/scope/apply` (validates like create, then writes the engagement scope). SAFETY: apply runs the SAME validation as `_create_engagement`; the deterministic startup scope-confirm gate still runs before any scanning; the agent can never widen scope or approve for the operator.
+
+- [ ] **Step 1: Write the failing tests (agent module)** — create `tests/test_agent_scope.py`:
+
+```python
+import unittest
+from modules.agent_scope.agent import build_prompt, extract_proposed_scope
+
+
+class ScopeAgentTest(unittest.TestCase):
+    def test_confirm_prompt_when_typed_scope_present(self):
+        p = build_prompt({"in_scope_domains": ["t.com"]}, [{"role": "user", "text": "hi"}])
+        self.assertIn("already", p.lower())
+        self.assertIn("t.com", p)
+
+    def test_elicit_prompt_when_no_scope(self):
+        p = build_prompt(None, [])
+        self.assertIn("not", p.lower())
+        self.assertIn("PROPOSED_SCOPE", p)
+
+    def test_extract_proposed_scope(self):
+        text = 'Sure. PROPOSED_SCOPE: {"in_scope_domains":["a.com"],"in_scope_cidrs":[],"out_of_scope":[]}\nApprove?'
+        self.assertEqual(extract_proposed_scope(text)["in_scope_domains"], ["a.com"])
+
+    def test_extract_none_when_absent(self):
+        self.assertIsNone(extract_proposed_scope("just chatting, no proposal yet"))
+```
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `python3 -m unittest tests.test_agent_scope -v`
+Expected: FAIL — `modules.agent_scope` does not exist.
+
+- [ ] **Step 3: Implement the scope-agent module**
+
+Create `modules/agent_scope/__init__.py` (empty). Create `modules/agent_scope/agent.py`:
+
+```python
+"""Scope agent: a plain-chat helper that restates a typed scope for confirmation, or
+elicits a scope conversationally and proposes it. Pure prompt/parse logic — the web
+layer supplies the reasoner and enforces validation + the deterministic gate."""
+from __future__ import annotations
+import json
+import re
+
+_CONFIRM = (
+    "You are a scope agent for an AUTHORIZED penetration test. The operator has ALREADY "
+    "defined this scope. Restate it in plain language, flag anything that looks like a "
+    "typo or an unintentionally broad range, and ask them to confirm. Do NOT invent new "
+    "targets.\n\nScope: {scope}\n\nConversation so far:\n{convo}\n")
+_ELICIT = (
+    "You are a scope agent for an AUTHORIZED penetration test. The operator has NOT "
+    "defined a scope yet. Ask concise questions to establish the in-scope targets "
+    "(domains, IPs, CIDRs) and anything explicitly out of scope. When you have enough, "
+    "output a line 'PROPOSED_SCOPE: ' followed by a JSON object "
+    '{{"in_scope_domains":[...],"in_scope_cidrs":[...],"out_of_scope":[...]}} and ask the '
+    "operator to approve. NEVER guess targets they did not give.\n\n"
+    "Conversation so far:\n{convo}\n")
+_PROP = re.compile(r"PROPOSED_SCOPE:\s*(\{.*\})", re.S)
+
+
+def build_prompt(typed_scope, convo) -> str:
+    body = "\n".join(f"{m.get('role')}: {m.get('text')}" for m in (convo or []))
+    if typed_scope:
+        return _CONFIRM.format(scope=json.dumps(typed_scope), convo=body)
+    return _ELICIT.format(convo=body)
+
+
+def extract_proposed_scope(text):
+    m = _PROP.search(text or "")
+    if not m:
+        return None
+    try:
+        obj = json.loads(m.group(1))
+    except Exception:
+        return None
+    return obj if isinstance(obj, dict) else None
+```
+
+- [ ] **Step 4: Run to verify pass**
+
+Run: `python3 -m unittest tests.test_agent_scope -v`
+Expected: PASS.
+
+- [ ] **Step 5: Write the failing tests (web endpoints)** — append to `tests/test_web.py` inside `WebTest`:
+
+```python
+    def test_scope_apply_writes_valid_scope(self):
+        store = SQLiteStore(self.db)
+        store.create_engagement("e1", "E1", {"in_scope_domains": ["old.com"]},
+                                "e1.scope.json", "semi", {})
+        body = json.dumps({"scope": {"domains": {"web": {"enabled": True, "in": ["new.com"]}}}}).encode()
+        st, _, _, _ = self.app.handle("POST", "/api/scope/apply", {"eng": "e1"}, body)
+        self.assertEqual(st, 200)
+        sc = json.loads(SQLiteStore(self.db).get_engagement("e1")["scope"])
+        self.assertIn("new.com", sc.get("in_scope_domains", []))
+
+    def test_scope_apply_rejects_empty_target(self):
+        store = SQLiteStore(self.db)
+        store.create_engagement("e1", "E1", {"in_scope_domains": ["old.com"]},
+                                "e1.scope.json", "semi", {})
+        body = json.dumps({"scope": {"domains": {"web": {"enabled": True, "in": []}}}}).encode()
+        st, _, _, _ = self.app.handle("POST", "/api/scope/apply", {"eng": "e1"}, body)
+        self.assertEqual(st, 400)
+
+    def test_scope_chat_returns_shape(self):
+        store = SQLiteStore(self.db)
+        store.create_engagement("e1", "E1", {"in_scope_domains": ["t.com"]},
+                                "e1.scope.json", "semi", {})
+        body = json.dumps({"typed_scope": {"in_scope_domains": ["t.com"]}, "messages": []}).encode()
+        st, _, b, _ = self.app.handle("POST", "/api/scope/chat", {"eng": "e1"}, body)
+        self.assertEqual(st, 200)
+        d = json.loads(b)
+        self.assertIn("reply", d)
+        self.assertIn("proposed_scope", d)
+```
+
+- [ ] **Step 6: Run to verify failure**
+
+Run: `python3 -m unittest tests.test_web -v`
+Expected: FAIL — `/api/scope/*` routes 404.
+
+- [ ] **Step 7: Implement the store method, validation refactor, reasoner helper, and routes**
+
+In `atpt/state.py` (engagements section) add:
+
+```python
+    def set_scope(self, eid, scope: dict):
+        self.cx.execute("UPDATE engagements SET scope=? WHERE id=?", (json.dumps(scope), eid))
+        self.cx.commit()
+```
+
+In `atpt/web.py`, extract the create-time scope validation into a reusable method and have `_create_engagement` call it:
+
+```python
+    def _validate_scope_payload(self, raw_scope):
+        scope = _derive_scope(raw_scope or {})
+        empty = _enabled_without_target(raw_scope or {})
+        if empty:
+            return None, (f"selected scope {'categories' if len(empty) > 1 else 'category'} "
+                          f"{', '.join(empty)} need a target — supply an in-scope host/IP/CIDR "
+                          f"(or deselect it); a blank category is not scanned as the full domain")
+        if not (scope.get("in_scope_domains") or scope.get("in_scope_cidrs")):
+            return None, "scope must define at least one in-scope domain or CIDR (target required)"
+        return scope, None
+```
+
+Add a scope reasoner helper (mirrors Task 6's `_report_reason_fn`):
+
+```python
+    def _scope_reason_fn(self, eid):
+        store = self._store()
+        eng = store.get_engagement(eid) or {}
+        cfg = json.loads(eng.get("config") or "{}")
+        rc = cfg.get("reasoning") or (store.get_settings() or {}).get("reasoning")
+        if not rc:
+            return None
+        from .reasoning import ReasoningLadder
+        ladder = ReasoningLadder(rc)
+        def rf(prompt):
+            res = ladder.reason(prompt, "scope", role="scope")
+            return res.text if res else None
+        return rf
+```
+
+Add the routes in `handle` (near the other engagement `/api/...` routes, where `eid` is already resolved):
+
+```python
+        if path == "/api/scope/chat" and method == "POST":
+            from modules.agent_scope.agent import build_prompt, extract_proposed_scope
+            rf = self._scope_reason_fn(eid)
+            reply = rf(build_prompt(data.get("typed_scope"), data.get("messages") or [])) if rf else ""
+            reply = reply or ""
+            return self._json(200, {"reply": reply, "proposed_scope": extract_proposed_scope(reply)})
+        if path == "/api/scope/apply" and method == "POST":
+            scope, err = self._validate_scope_payload(data.get("scope") or {})
+            if err:
+                return self._json(400, {"error": err})
+            store.set_scope(eid, scope)
+            store.add_event(eid, "scope", None, "info", "scope_set",
+                            "scope written via scope agent (pending startup confirmation)", None)
+            return self._json(200, {"scope": scope})
+```
+
+- [ ] **Step 8: Run to verify pass**
+
+Run: `python3 -m unittest tests.test_agent_scope tests.test_web -v`
+Expected: PASS.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add modules/agent_scope/ atpt/state.py atpt/web.py tests/test_agent_scope.py tests/test_web.py
+git commit -m "feat(scope): conversational scope agent backend (chat + validated apply); deterministic gate unchanged"
+```
+
+---
+
+### Task 12: Scope-agent chat UI (Item 9)
+
+**Files:**
+- Modify: `atpt/web.py` (Scope chat panel: messages + send → `/api/scope/chat`; "Approve & write scope" → `/api/scope/apply`; on start with a typed scope, open with the agent's restatement)
+- Test: manual UI; backend covered by Task 11.
+
+**Interfaces:**
+- Consumes: Task 11's `/api/scope/chat`, `/api/scope/apply`.
+- Produces: a chat-style scope setup in the console. Mode A (scope typed in the form) → the agent restates it and asks approval; Mode B (no scope) → the agent elicits scope and, on approval, writes it. The deterministic startup confirmation still gates the run.
+
+- [ ] **Step 1: Add the scope-chat widget to the Scope panel**
+
+In the Settings→Scope panel (the `loadScope` area of `atpt/web.py`), add a chat widget below the existing scope form:
+
+```html
+<div id="scope_chat" class="chat" style="max-height:220px;overflow:auto"></div>
+<div class="row">
+  <input id="scope_msg" placeholder="Describe or confirm your scope…">
+  <button id="scope_send">Send</button>
+  <button id="scope_apply" class="ghost">Approve &amp; write scope</button>
+</div>
+```
+
+- [ ] **Step 2: Wire the chat JS**
+
+Add, adapting selectors and the `api()` helper to the existing web JS conventions:
+
+```javascript
+let SCOPE_MSGS = [], SCOPE_PROPOSED = null;
+function currentTypedScope(){ /* return the scope form payload if the operator filled it, else null */ return null; }
+function renderScopeChat(){ $('#scope_chat').innerHTML = SCOPE_MSGS.map(m=>
+  `<div class="msg ${esc(m.role)}">${esc(m.text)}</div>`).join(''); }
+async function scopeSend(){
+  const t=$('#scope_msg').value.trim(); if(t){ SCOPE_MSGS.push({role:'user',text:t}); }
+  $('#scope_msg').value='';
+  const r=await api('/api/scope/chat?eng='+encodeURIComponent(ENG),{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({typed_scope:currentTypedScope(),messages:SCOPE_MSGS})});
+  if(r.reply){ SCOPE_MSGS.push({role:'assistant',text:r.reply}); }
+  if(r.proposed_scope){ SCOPE_PROPOSED=r.proposed_scope; }
+  renderScopeChat();
+}
+async function scopeApply(){
+  const scope = SCOPE_PROPOSED || currentTypedScope();
+  if(!scope){ SCOPE_MSGS.push({role:'assistant',text:'No scope to write yet — describe it first.'}); renderScopeChat(); return; }
+  const r=await api('/api/scope/apply?eng='+encodeURIComponent(ENG),{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({scope})});
+  if(r.error){ SCOPE_MSGS.push({role:'assistant',text:'⚠ '+r.error}); renderScopeChat(); return; }
+  SCOPE_MSGS.push({role:'assistant',text:'Scope written. It will be confirmed again before scanning starts.'});
+  renderScopeChat(); loadScope();
+}
+$('#scope_send')&&($('#scope_send').onclick=scopeSend);
+$('#scope_apply')&&($('#scope_apply').onclick=scopeApply);
+```
+
+- [ ] **Step 3: Manual verification**
+
+Run the app, open Scope, chat to define or confirm a scope, click Approve, confirm the engagement scope updates and the deterministic startup confirmation still appears when a run starts.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add atpt/web.py
+git commit -m "feat(web): scope-agent chat panel (define/confirm scope in plain chat)"
+```
+
+---
+
+### Task 13: Full-suite green + docs
 
 **Files:**
 - Modify: `README.md` (director-as-default engine, rich findings + clickable detail, LLM report, per-role ladders)
@@ -984,7 +1375,7 @@ Expected: all green (baseline ≈312 + the tests added here), 0 warnings. Fix an
 
 - [ ] **Step 2: Update the README**
 
-Document, briefly: the LLM Director is the default engine (classic pipeline selectable); findings are authored by the director with full write-ups; the findings table is clickable to a detail view with operator-attached screenshots; the PTES report's executive summary + methodology are written by an LLM from the real run (deterministic template when no model is configured); model ladders are configurable globally and per role, with any provider usable for any role (nothing pinned to a specific model).
+Document, briefly: the LLM Director is the default engine (classic pipeline selectable); findings are authored by the director with full write-ups; the findings table is clickable to a detail view with operator-attached screenshots; the PTES report's executive summary + methodology are written by an LLM from the real run (deterministic template when no model is configured); model ladders are configurable globally and per role, with any provider usable for any role (nothing pinned to a specific model); recon runs as two phases (a passive OSINT expert then active recon); and scope can be set or confirmed by chatting with a scope agent (the deterministic gate still confirms before scanning).
 
 - [ ] **Step 3: Commit**
 
@@ -1005,10 +1396,13 @@ git commit -m "docs(readme): LLM director default, rich findings + detail view, 
 - Item 5 (clickable detail + screenshots) → Task 7. ✅
 - Item 6 (ladder error-shaped fallback) → Task 1. ✅
 - Item 7 (per-role ladders: backend + role threading, UI) → Task 2 (backend) + Task 8 (UI). ✅
+- Item 8 (recon split) → Task 10 (OSINT phase); `active_recon` role registered in Task 2. Active recon runs under the director loop for now; a fully separate active-recon agent is a noted follow-up. ✅
+- Item 9 (conversational scope agent) → Task 11 (backend) + Task 12 (UI); deterministic scope wall + startup confirmation unchanged. ✅
+- Item 11 (debugger agent) → deferred to its own spec+plan (operator decision, 2026-09-19). Not in this plan.
 - Safety unchanged (D-safety): no task touches `guard.py`/`scope.py`/approval gating; the `finding` action runs no command; the report pass only reads/writes prose. ✅
 - Model-agnostic (D6): no provider/model hardcoded; the report reason_fn returns None → template. ✅
 
-**Placeholder scan:** every code step carries real code; every test step carries assertions; no TBD/TODO. Web-only JS steps (Tasks 5/7/8) pair the manual UI change with a backend test that locks the contract. ✅
+**Placeholder scan:** every code step carries real code; every test step carries assertions; no TBD/TODO. Web-only JS steps (Tasks 5/7/8/12) pair the manual UI change with a backend test that locks the contract. ✅
 
 **Type consistency:**
 - `reason(prompt, phase, role=None)` — defined in Task 2, used in Tasks 2/6; `ctx.reason(..., role=...)` consistent across `agent_offensive`, `map_ptt`, `exploit_hbgpt`, `report_ptes`, `web`. ✅
