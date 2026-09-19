@@ -133,6 +133,35 @@ class LoopTest(unittest.TestCase):
             emit=lambda *a, **k: None, execute_fn=lambda *a, **k: {}, harvest_fn=lambda a, r: ([], []))
         self.assertIn("no_reasoner", summary)
 
+    def test_finding_action_records_rich_finding(self):
+        scripted = iter([
+            '{"finding":{"title":"SQLi in login","severity":"high",'
+            '"what_it_is":"boolean-blind SQLi","how_i_proved_it":"curl \\" OR 1=1",'
+            '"affected":"http://t/login","impact":"auth bypass",'
+            '"remediation":"parameterize","confidence":"confirmed"}}',
+            '{"done": true}',
+        ])
+        assets, findings, summary = run_loop(
+            goal="x", guard=guard(), reason_fn=lambda _: next(scripted), max_steps=5,
+            emit=lambda *a, **k: None, execute_fn=lambda a, timeout=300: {"rc": 0, "out": "", "err": ""},
+            harvest_fn=lambda a, r: ([], []))
+        self.assertEqual(len(findings), 1)
+        f = findings[0]
+        self.assertEqual(f["title"], "SQLi in login")
+        self.assertEqual(f["status"], "validated")           # confidence "confirmed"
+        self.assertEqual(f["source_tool"], "agent-director")
+        self.assertEqual(f["evidence"]["reproduction"], 'curl " OR 1=1')
+        self.assertEqual(f["evidence"]["impact"], "auth bypass")
+
+    def test_malformed_finding_is_nonfatal(self):
+        scripted = iter(['{"finding":{"title":"no severity"}}', '{"done":true}'])
+        assets, findings, summary = run_loop(
+            goal="x", guard=guard(), reason_fn=lambda _: next(scripted), max_steps=5,
+            emit=lambda *a, **k: None, execute_fn=lambda a, timeout=300: {"rc": 0, "out": "", "err": ""},
+            harvest_fn=lambda a, r: ([], []))
+        self.assertEqual(len(findings), 0)                    # rejected, not crashed
+        self.assertIn("done", summary.lower())
+
 
 class LoopToolboxInjectTest(unittest.TestCase):
     def test_playbook_hint_injected_after_service_discovered(self):

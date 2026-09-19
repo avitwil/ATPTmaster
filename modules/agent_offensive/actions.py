@@ -5,6 +5,7 @@ last-JSON-object strategy proven in bench/actions.py. Action kinds:
   listen  : arm the reverse-shell listener -> {"listen": {"port": 4444}}  (port optional)
   session : run a command in the held shell -> {"session": "sudo -l"}
   ssh     : open an SSH session -> {"ssh": {"host": "h", "user": "u"}}
+  finding : author a rich finding -> {"finding": {"title": "...", "severity": "high", ...}}
   done    : goal met -> {"done": true}
 """
 from __future__ import annotations
@@ -21,6 +22,7 @@ class Action:
     port: int = 0
     ssh_host: str = ""
     ssh_user: str = ""
+    finding: dict = field(default_factory=dict)
     rationale: str = ""
     done: bool = False
 
@@ -74,6 +76,11 @@ def parse_action(text: str) -> "Action | None":
         if isinstance(spec, dict):
             return Action(kind="ssh", ssh_host=str(spec.get("host") or ""),
                           ssh_user=str(spec.get("user") or ""), rationale=rationale)
+        return None
+    if obj.get("finding") is not None:
+        spec = obj.get("finding")
+        if isinstance(spec, dict):
+            return Action(kind="finding", finding=spec, rationale=rationale)
         return None
     cmd = obj.get("command")
     if isinstance(cmd, str):

@@ -49,6 +49,18 @@ class ActionsTest(unittest.TestCase):
         self.assertEqual(a.kind, "ssh")
         self.assertEqual((a.ssh_host, a.ssh_user), ("10.1.1.5", "web"))
 
+    def test_parse_finding_action(self):
+        from modules.agent_offensive.actions import parse_action
+        a = parse_action('{"finding": {"title":"SQLi","severity":"high",'
+                         '"how_i_proved_it":"curl X"}, "rationale":"proven"}')
+        self.assertEqual(a.kind, "finding")
+        self.assertEqual(a.finding["title"], "SQLi")
+        self.assertEqual(a.finding["how_i_proved_it"], "curl X")
+
+    def test_finding_must_be_object(self):
+        from modules.agent_offensive.actions import parse_action
+        self.assertIsNone(parse_action('{"finding": "not-an-object"}'))
+
 
 if __name__ == "__main__":
     unittest.main()

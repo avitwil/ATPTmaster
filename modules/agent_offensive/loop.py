@@ -21,6 +21,10 @@ _PROMPT = (
     '  {{"listen": {{"port": 4444}}, "rationale": "..."}}      arm a reverse-shell listener (returns host:port)\n'
     '  {{"session": "id", "rationale": "..."}}                run a command in the caught shell\n'
     '  {{"ssh": {{"host":"h","user":"u"}}}}                     open an SSH session (if you have creds)\n'
+    '  {{"finding": {{"title":"...","severity":"critical|high|medium|low|info",'
+    '"what_it_is":"...","how_i_proved_it":"the commands + output that prove it",'
+    '"affected":"host/url/param","impact":"...","remediation":"...",'
+    '"confidence":"confirmed|likely|tentative"}}}}  record a real issue YOU concluded\n'
     '  {{"done": true}}                                         only when BOTH flags are captured\n\n'
     "HOW `command` RUNS: it is exec'd as a raw argv list with NO shell of your own. A "
     "';', '|', '&', '&&' or '>' written as a SEPARATE token is a literal argument, not "
@@ -52,6 +56,11 @@ def _scan_flags(text, source, findings, emit):
                          "status": "validated", "domain": "Flag",
                          "evidence": {"flag": flag, "via": source}})
         emit("agent_flag", f"[agent] 🚩 FLAG: {flag}  (via {source})", data={"flag": flag})
+
+
+def _status_from_confidence(conf):
+    c = str(conf or "").strip().lower()
+    return "validated" if c in ("confirmed", "high") else "candidate"
 
 
 def _build_playbook(hints):
@@ -157,6 +166,35 @@ def run_loop(*, goal, guard, reason_fn, max_steps, emit, execute_fn, harvest_fn,
         if action.kind == "ssh":
             transcript.append("OBSERVATION: SSH sessions aren't wired yet — get a foothold "
                               "with a reverse shell instead (arm a listener + trigger a callback).")
+            continue
+
+        if action.kind == "finding":
+            fd = action.finding or {}
+            title = str(fd.get("title") or "").strip()
+            sev = str(fd.get("severity") or "").strip().lower()
+            if not title or not sev:
+                transcript.append("OBSERVATION: a finding needs at least a title and a "
+                                  "severity; restate it as ONE finding JSON.")
+                continue
+            findings.append({
+                "title": title, "severity": sev,
+                "domain": fd.get("domain") or "General",
+                "cvss": fd.get("cvss"), "owasp": fd.get("owasp"),
+                "status": _status_from_confidence(fd.get("confidence")),
+                "source_tool": "agent-director",
+                "evidence": {
+                    "asset_value": fd.get("affected"),
+                    "description": fd.get("what_it_is") or fd.get("description"),
+                    "reproduction": fd.get("how_i_proved_it"),
+                    "impact": fd.get("impact"),
+                    "remediation": fd.get("remediation"),
+                    "confidence": fd.get("confidence"),
+                },
+            })
+            emit("agent_finding", f"[agent] finding: {title} ({sev})",
+                 data={"title": title, "severity": sev})
+            transcript.append(f"OBSERVATION: recorded finding '{title}' ({sev}). "
+                              f"Continue toward the goal.")
             continue
 
         # kind == command
