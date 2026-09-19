@@ -531,8 +531,10 @@ class WebApp:
         if not has_target:
             return self._json(400, {"error": "scope must define at least one in-scope domain or CIDR (target required)"})
         store = self._store()
+        engine = (data.get("engine") or "director")
+        config = {"offensive_agent": {"enabled": engine != "classic"}}
         store.create_engagement(eid, data.get("name") or eid, scope, f"{eid}.scope.json",
-                                data.get("mode") or "semi", {})
+                                data.get("mode") or "semi", config)
         store.add_event(eid, "scope", None, "info", "engagement_init",
                         f"engagement '{eid}' created via UI", None)
         return self._json(200, {"engagement": store.get_engagement(eid)})
@@ -977,6 +979,12 @@ pre.out{background:var(--field);border:1px solid var(--edge);border-radius:6px;p
             <label>Target name<input id="f_name" placeholder="THM: Infinity Pool"></label>
             <label class="full"><b>Target (IP or CIDR)</b> — the primary in-scope host<input id="f_target" placeholder="10.10.10.10  or  10.10.10.0/24"></label>
             <label>Default mode<select id="f_mode"><option>step</option><option selected>semi</option><option>full</option></select></label>
+            <label class="hint">Engine
+              <select id="engine">
+                <option value="director" selected>Director (LLM drives the engagement)</option>
+                <option value="classic">Classic pipeline (fixed scan chain)</option>
+              </select>
+            </label>
           </div>
           <div class="hint" style="margin-top:6px">Optional — refine with per-domain scope below (Web/API hosts, extra Infra ranges, out-of-scope):</div>
           <div id="scopeDomains" style="margin-top:6px;display:flex;flex-direction:column;gap:8px"></div>
@@ -1201,7 +1209,8 @@ async function loadScope(){
 $('#createbtn').onclick=async()=>{
   const scope=collectScope();
   const r=await api('/api/engagement',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({engagement:$('#f_id').value.trim(),name:$('#f_name').value.trim(),scope,mode:$('#f_mode').value})});
+    body:JSON.stringify({engagement:$('#f_id').value.trim(),name:$('#f_name').value.trim(),scope,mode:$('#f_mode').value,
+      engine:($('#engine')&&$('#engine').value)||'director'})});
   if(r.error){$('#createmsg').textContent='⚠ '+r.error;return}
   $('#createmsg').textContent='saved ✓';chat('sys','Engagement <b>'+esc(r.engagement.id)+'</b> scope saved. Send <b>run</b>.');
   await refreshEngagements(r.engagement.id);

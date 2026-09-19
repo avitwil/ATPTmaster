@@ -200,3 +200,15 @@ class WebTest(unittest.TestCase):
         st, _, body, _ = self.app.handle("POST", "/api/engagement", {}, b"{not json")
         self.assertEqual(st, 400)
         self.assertIn("invalid JSON", json.loads(body)["error"])
+
+    def test_create_defaults_to_director_engine(self):
+        self._post("/api/engagement", {"engagement": "d1", "mode": "semi",
+            "scope": {"domains": {"web": {"enabled": True, "in": ["acme.com"]}}}})
+        cfg = json.loads(SQLiteStore(self.db).get_engagement("d1")["config"] or "{}")
+        self.assertTrue(cfg.get("offensive_agent", {}).get("enabled"))
+
+    def test_create_classic_engine_disables_agent(self):
+        self._post("/api/engagement", {"engagement": "c1", "mode": "semi", "engine": "classic",
+            "scope": {"domains": {"web": {"enabled": True, "in": ["acme.com"]}}}})
+        cfg = json.loads(SQLiteStore(self.db).get_engagement("c1")["config"] or "{}")
+        self.assertFalse(cfg.get("offensive_agent", {}).get("enabled"))
