@@ -17,6 +17,9 @@ download a **PTES-compliant Markdown report** at the end.
   optional package and gracefully falls back to a browser window without it.
 - **Bring your own LLM** — hosted API key, an existing CLI login, or a local
   Ollama. Each operator uses their own keys; nothing proprietary is bundled.
+- **An offensive agent that learns** — opt in and the LLM drives the scan/exploit
+  loop itself, one command at a time, then distills each win into a reusable
+  **skill** it reaches for on the next target. Always scope-locked.
 
 > Only test systems you are **authorized** to test. Every intrusive step enforces
 > your engagement scope and, in `semi` mode, pauses for your approval.
@@ -108,8 +111,9 @@ Everything is configured in the menu — no JSON editing:
   config, goals, attack-box).
 - **App settings** — *Mode* (`step` / `semi` / `full`), *Appearance* (light / dark /
   system, plus **Allow sudo** — password held in memory only), *Model ladder*
-  (ordered models each with an effort level), and *Report* (include/exclude findings,
-  add notes and screenshots, then **Download**).
+  (ordered models each with an effort level), *Report* (include/exclude findings,
+  add notes and screenshots, then **Download**), and *Toolbox* (the offensive
+  agent's learned skills — view service tags and what worked, or delete one).
 
 Provider / model / user / sudo settings are global; scope, CTF and report settings
 attach to the selected engagement.
@@ -137,8 +141,35 @@ It is supervised so it can **never leave scope**:
   disconnects the VPN).
 
 Discovered services and issues flow into the same map → validate → **PTES report**
-pipeline. See the design in
+pipeline, and every win is distilled into a reusable skill — see the **Strategy
+Toolbox** below. See the design in
 [`docs/superpowers/specs/2026-09-18-llm-driven-offensive-agent-design.md`](docs/superpowers/specs/2026-09-18-llm-driven-offensive-agent-design.md).
+
+## Strategy Toolbox — the agent learns from its wins
+
+The offensive agent keeps a **toolbox of skills**. When a run succeeds — it captures
+a flag or confirms a finding — the winning steps are distilled into a reusable
+**skill**: a short, tool-generic recipe tagged with the goal and the services it
+applies to. On a later target the agent searches the toolbox and injects the
+best-matching skills into its prompt as a **learned playbook**, so it reaches for a
+proven technique instead of rediscovering it from scratch.
+
+![Toolbox panel](docs/screenshots/settings-toolbox.png)
+
+- **Where they live.** One JSON file per skill under your data home
+  (`~/.local/share/ATPTmaster/toolbox/*.json`) — hand-editable and portable. Share a
+  skill by dropping its file in; the agent indexes it on the next run.
+- **Operator-visible.** **☰ → App settings → Toolbox** lists every skill with its
+  service tags and what worked, each with a **Delete** control. A skill records its
+  `name`, `applies_to` (goal / service tags), `steps` (argv templated with
+  placeholders like `{TARGET}`), a one-line `success_note`, and its provenance.
+- **Suggestions, never authority.** A skill only *suggests* commands. Every command
+  the agent runs — learned or not — still passes the deterministic scope wall and the
+  tool allowlist at execution time, so a shared or hand-edited skill can **never widen
+  your scope** or unlock a new tool; at worst a bad suggestion is blocked.
+
+Nothing to configure: the toolbox fills itself as you run the agent, and grows more
+useful the more engagements you run.
 
 ## Under the hood
 
