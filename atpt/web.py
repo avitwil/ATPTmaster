@@ -418,12 +418,12 @@ class WebApp:
         if path == "/api/providers/login" and method == "POST":
             return self._provider_login(data)
         if path == "/api/toolbox":
-            tb = Toolbox(self.project_dir / "toolbox")
-            if method == "GET":
-                return self._json(200, {"skills": tb.list_skills()})
-            if method == "DELETE":
-                return self._json(200, {"deleted": tb.delete(query.get("name") or "")})
-            return self._json(405, {"error": "GET or DELETE"})
+            with Toolbox(self.project_dir / "toolbox") as tb:
+                if method == "GET":
+                    return self._json(200, {"skills": tb.list_skills()})
+                if method == "DELETE":
+                    return self._json(200, {"deleted": tb.delete(query.get("name") or "")})
+                return self._json(405, {"error": "GET or DELETE"})
 
         eid = query.get("eng") or data.get("eng")
         if path.startswith("/api/") and not eid:

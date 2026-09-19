@@ -34,7 +34,7 @@ def _templatise(tok: str, subs: dict) -> str:
 def distill(*, goal, transcript, reason_fn, substitutions=None, provenance=None):
     text = reason_fn(_PROMPT.format(goal=goal, transcript=transcript))
     obj = last_json(text or "")
-    if not isinstance(obj, dict) or not obj.get("steps"):
+    if not isinstance(obj, dict) or not isinstance(obj.get("steps"), list) or not obj.get("steps"):
         return None
     for step in obj["steps"]:
         cmd = step.get("command")

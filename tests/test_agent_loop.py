@@ -219,6 +219,34 @@ class LoopToolboxSaveTest(unittest.TestCase):
         self.assertEqual(called["n"], 0)
         self.assertEqual(tb.list_skills(), [])
 
+    def test_distill_failure_is_nonfatal(self):
+        tmp = TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        tb = Toolbox(Path(tmp.name) / "toolbox")
+        scripted = iter([
+            '{"command":["curl","http://10.1.1.5/"]}',   # produces a flag finding via harvest
+            '{"done": true}',
+        ])
+
+        def hv(argv, res):
+            return ([], [{"title": "Flag captured: flag{x}", "severity": "critical",
+                          "status": "validated", "evidence": {"flag": "flag{x}"}}])
+
+        def boom(g, t):
+            raise RuntimeError("x")
+
+        events = []
+        assets, findings, summary = run_loop(
+            goal="capture the flag", guard=guard(), scope=SCOPE,
+            reason_fn=lambda p: next(scripted), max_steps=4,
+            emit=lambda *a, **k: events.append(a),
+            execute_fn=lambda argv, timeout=300: {"rc": 0, "out": "", "err": ""},
+            harvest_fn=hv, toolbox=tb, distill_fn=boom)
+        # summary intact, no exception propagated out of run_loop
+        self.assertIn("done", summary.lower())
+        self.assertTrue(findings)
+        self.assertTrue(any(e[0] == "agent_skill_error" for e in events))
+
 
 if __name__ == "__main__":
     unittest.main()

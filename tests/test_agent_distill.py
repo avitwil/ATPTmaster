@@ -33,6 +33,13 @@ class DistillTest(unittest.TestCase):
                                   reason_fn=lambda p: '{"name":"z"}'))
         self.assertIsNone(distill(goal="x", transcript="y", reason_fn=lambda p: "junk"))
 
+    def test_none_when_steps_is_not_a_list(self):
+        # a truthy non-list `steps` (string or dict) must be rejected, not iterated
+        self.assertIsNone(distill(goal="x", transcript="y",
+                                  reason_fn=lambda p: '{"name":"z","steps":"x"}'))
+        self.assertIsNone(distill(goal="x", transcript="y",
+                                  reason_fn=lambda p: '{"name":"z","steps":{"a":1}}'))
+
     def test_prompt_receives_goal_and_transcript(self):
         seen = {}
 

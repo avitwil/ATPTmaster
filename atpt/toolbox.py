@@ -60,6 +60,17 @@ class Toolbox:
         self.root.mkdir(parents=True, exist_ok=True)
         self._cx = None
 
+    def close(self):
+        if self._cx is not None:
+            self._cx.close()
+            self._cx = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+
     # --- files (source of truth) --------------------------------------------
     def path_for(self, name: str) -> Path:
         return self.root / f"{slugify(name)}.json"
@@ -84,7 +95,9 @@ class Toolbox:
 
     def save(self, skill: dict):
         name = str(skill.get("name") or "").strip()
-        raw_steps = skill.get("steps") or []
+        raw_steps = skill.get("steps")
+        if not isinstance(raw_steps, list):
+            return None
         steps = [{"command": [str(x) for x in (s.get("command") or [])],
                   "note": str(s.get("note") or "")}
                  for s in raw_steps if s.get("command")]

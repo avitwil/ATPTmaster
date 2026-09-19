@@ -157,8 +157,11 @@ proven technique instead of rediscovering it from scratch.
 ![Toolbox panel](docs/screenshots/settings-toolbox.png)
 
 - **Where they live.** One JSON file per skill under your data home
-  (`~/.local/share/ATPTmaster/toolbox/*.json`) — hand-editable and portable. Share a
-  skill by dropping its file in; the agent indexes it on the next run.
+  (`~/.local/share/ATPTmaster/toolbox/*.json` — the **desktop app**'s location; on a
+  source checkout, e.g. `atpt --u`/`serve` — including the install.sh path, which
+  pins `ATPT_HOME` to the checkout — it's `<project home>/toolbox/` instead) —
+  hand-editable and portable. Share a skill by dropping its file in; the agent
+  indexes it on the next run.
 - **Operator-visible.** **☰ → App settings → Toolbox** lists every skill with its
   service tags and what worked, each with a **Delete** control. A skill records its
   `name`, `applies_to` (goal / service tags), `steps` (argv templated with

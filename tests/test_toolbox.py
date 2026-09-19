@@ -39,6 +39,11 @@ class ToolboxStoreTest(unittest.TestCase):
         self.assertIsNone(self.tb.save({"name": "", "steps": [{"command": ["x"]}]}))
         self.assertIsNone(self.tb.save({"name": "x", "steps": []}))
 
+    def test_save_rejects_non_list_steps(self):
+        # a truthy non-list `steps` (string or dict) must be rejected, not iterated
+        self.assertIsNone(self.tb.save({"name": "x", "steps": "not-a-list"}))
+        self.assertIsNone(self.tb.save({"name": "x", "steps": {"a": 1}}))
+
     def test_list_and_get(self):
         self.tb.save(self._skill())
         self.assertEqual(len(self.tb.list_skills()), 1)
@@ -50,6 +55,18 @@ class ToolboxStoreTest(unittest.TestCase):
         self.assertTrue(self.tb.delete("SQLi UNION dump"))
         self.assertFalse(self.tb.delete("SQLi UNION dump"))
         self.assertEqual(self.tb.list_skills(), [])
+
+    def test_context_manager_closes_and_reopens_cleanly(self):
+        with Toolbox(self.root) as tb:
+            tb.save(self._skill())
+            self.assertEqual(len(tb.list_skills()), 1)
+        # closed now; a fresh Toolbox on the same root still reads what was saved
+        tb2 = Toolbox(self.root)
+        self.assertEqual(len(tb2.list_skills()), 1)
+        self.assertEqual(tb2.get("SQLi UNION dump")["success_note"], "UNION SQLi dumped users")
+        # the original instance also remains usable: close() doesn't corrupt it,
+        # the sqlite connection just reopens lazily on next use
+        self.assertEqual(tb.search(["dump"], ["http"])[0]["name"], "SQLi UNION dump")
 
     def test_reindex_picks_up_hand_dropped_file(self):
         # a shared skill dropped in by hand (not via save())
