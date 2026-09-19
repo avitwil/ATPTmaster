@@ -194,6 +194,13 @@ class SQLiteStore:
             "SELECT ts,phase,module,level,kind,message FROM events WHERE engagement_id=? "
             "ORDER BY id DESC LIMIT ?", (eid, limit))]
 
+    def list_events(self, eid) -> list[dict]:
+        """ALL events for an engagement, chronological, including `data` — used to
+        reconstruct the run transcript for the LLM-authored report."""
+        return [dict(r) for r in self.cx.execute(
+            "SELECT ts,phase,module,level,kind,message,data FROM events "
+            "WHERE engagement_id=? ORDER BY id", (eid,))]
+
     # --- approvals -----------------------------------------------------------
     def request_approval(self, eid, module, phase, reason):
         row = self.cx.execute(

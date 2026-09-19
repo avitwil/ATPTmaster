@@ -41,3 +41,17 @@ class FindingStoreTest(unittest.TestCase):
         # attempting to promote under the wrong engagement must not change E's finding
         self.store.set_finding_status("F", fid, "validated")
         self.assertEqual(self.store.count_findings("E", status="validated"), 0)
+
+    def test_rich_finding_evidence_round_trips(self):
+        import json
+        self.store.upsert_finding("E", {
+            "title": "Blind SQLi in /login", "severity": "high", "status": "validated",
+            "domain": "Web", "cvss": 8.1, "owasp": "A03", "source_tool": "agent-director",
+            "evidence": {"asset_value": "http://t/login", "description": "boolean-blind SQLi",
+                         "reproduction": "curl ...' OR 1=1-- => 200 vs 500", "impact": "auth bypass",
+                         "remediation": "use parameterized queries", "confidence": "confirmed"}})
+        row = self.store.list_findings("E")[0]
+        ev = json.loads(row["evidence"])
+        self.assertEqual(ev["reproduction"], "curl ...' OR 1=1-- => 200 vs 500")
+        self.assertEqual(ev["remediation"], "use parameterized queries")
+        self.assertEqual(row["source_tool"], "agent-director")
