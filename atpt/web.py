@@ -1113,6 +1113,14 @@ pre.out{background:var(--field);border:1px solid var(--edge);border-radius:6px;p
   </div>
 </div>
 
+<div id="findingDetail" class="modal hidden">
+  <div class="sheet" style="max-width:640px">
+    <div class="sheettop"><b id="fd_title">Finding</b><span class="sp"></span>
+      <button class="ghost" id="fd_close">✕</button></div>
+    <div class="panels" id="fd_body"></div>
+  </div>
+</div>
+
 <script>
 const $=s=>document.querySelector(s), api=(p,o)=>fetch(p,o).then(r=>r.json());
 let ENG=null;
@@ -1156,14 +1164,70 @@ async function refreshStatus(){
   document.querySelectorAll('.msg.ev').forEach(e=>e.remove());
   (s.events||[]).slice(-12).forEach(e=>chat('ev',`[${esc(e.phase||'')}/${esc(e.module||'')}] ${esc(e.message)}`));
 }
+let FINDINGS=[];
 async function refreshFindings(){
   const {findings}=await api('/api/findings?eng='+encodeURIComponent(ENG));
+  FINDINGS=findings;
   if(!findings.length){$('#findings').innerHTML='<span class=muted>No findings yet — run the pipeline.</span>';return}
-  const rows=findings.map(f=>`<tr><td><span class="pill sev-${sevCls(f.severity)}">${esc(f.severity||'info')}</span></td>
+  const rows=findings.map(f=>`<tr data-fid="${f.id}" style="cursor:pointer"><td><span class="pill sev-${sevCls(f.severity)}">${esc(f.severity||'info')}</span></td>
     <td>${esc(f.title)}<div class=muted style="font-size:11px">${esc((f.evidence&&f.evidence.asset_value)||f.source_tool||'')}</div></td>
     <td class="st-${stCls(f.status)}">${esc(f.status)}</td><td>${esc(f.owasp||'—')}</td><td>${esc(f.cvss??'—')}</td></tr>`).join('');
   $('#findings').innerHTML=`<table><tr><th>Sev</th><th>Finding</th><th>Status</th><th>OWASP</th><th>CVSS</th></tr>${rows}</table>`;
+  document.querySelectorAll('#findings tr[data-fid]').forEach(tr=>tr.onclick=()=>showFindingDetail(+tr.dataset.fid));
 }
+
+/* ---- finding detail panel: full write-up + shared screenshot slot ---- */
+function fdRow(label,val){ return val?`<div style="margin-top:8px"><div class="hint" style="text-transform:uppercase;letter-spacing:.04em">${esc(label)}</div><div style="white-space:pre-wrap">${esc(val)}</div></div>`:''; }
+async function showFindingDetail(id){
+  const f=FINDINGS.find(x=>x.id===id); if(!f)return;
+  const ev=f.evidence||{};
+  const rs=await api('/api/report-settings?eng='+encodeURIComponent(ENG));
+  const shots=((rs.findings||{})[id]||{}).screenshots||[];
+  $('#fd_title').textContent=f.title||('Finding #'+id);
+  $('#fd_body').innerHTML=`
+    <div class="row">
+      <span class="pill sev-${sevCls(f.severity)}">${esc(f.severity||'info')}</span>
+      <span class="st-${stCls(f.status)}">${esc(f.status||'candidate')}</span>
+      ${f.owasp?`<span class="badge">${esc(f.owasp)}</span>`:''}
+      ${(f.cvss!=null&&f.cvss!=='')?`<span class="badge">CVSS ${esc(f.cvss)}</span>`:''}
+    </div>
+    ${fdRow('Affected',ev.asset_value)}
+    ${fdRow('Description',ev.description)}
+    ${fdRow('How it was proven',ev.reproduction)}
+    ${fdRow('Impact',ev.impact)}
+    ${fdRow('Remediation',ev.remediation)}
+    ${fdRow('Confidence',ev.confidence)}
+    <div style="margin-top:12px">
+      <div class="hint" style="text-transform:uppercase;letter-spacing:.04em">Screenshots</div>
+      <div id="fd_shots" class="row" style="flex-wrap:wrap;margin-top:6px">${shots.map(p=>
+        `<img src="file://${esc(p)}" title="${esc(p)}" style="max-width:160px;max-height:120px;border:1px solid var(--edge);border-radius:6px">`).join('')
+        ||'<span class="hint">none yet</span>'}</div>
+      <div class="row" style="margin-top:8px">
+        <input type="file" id="fd_shot_file" accept="image/*" hidden>
+        <button class="ghost" id="fd_shot_pick">+ Add screenshot</button>
+        <span class="hint" id="fd_shot_msg"></span>
+      </div>
+    </div>`;
+  $('#fd_shot_pick').onclick=()=>$('#fd_shot_file').click();
+  $('#fd_shot_file').onchange=async e=>{
+    const file=e.target.files[0]; if(!file)return;
+    $('#fd_shot_msg').textContent='uploading…';
+    const up=await uploadPicked(file);
+    if(up.error){$('#fd_shot_msg').textContent='⚠ '+esc(up.error);return;}
+    // merge into the SAME store slot the report customization panel writes —
+    // fetch current settings first so every other finding's entry survives.
+    const cur=await api('/api/report-settings?eng='+encodeURIComponent(ENG));
+    const findings=Object.assign({},cur.findings||{});
+    const entry=findings[id]||{};
+    findings[id]=Object.assign({},entry,{screenshots:(entry.screenshots||[]).concat([up.path])});
+    await api('/api/report-settings?eng='+encodeURIComponent(ENG),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({findings})});
+    $('#fd_shot_msg').textContent='saved ✓';
+    showFindingDetail(id);
+  };
+  $('#findingDetail').classList.remove('hidden');
+}
+$('#fd_close')&&($('#fd_close').onclick=()=>$('#findingDetail').classList.add('hidden'));
+$('#findingDetail')&&($('#findingDetail').onclick=e=>{if(e.target.id==='findingDetail')$('#findingDetail').classList.add('hidden');});
 async function refreshTree(){
   const t=await api('/api/tree?eng='+encodeURIComponent(ENG));
   if(!t.branches||!t.branches.length){$('#tree').innerHTML='<span class=muted>—</span>';return}

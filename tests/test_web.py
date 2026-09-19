@@ -212,3 +212,29 @@ class WebTest(unittest.TestCase):
             "scope": {"domains": {"web": {"enabled": True, "in": ["acme.com"]}}}})
         cfg = json.loads(SQLiteStore(self.db).get_engagement("c1")["config"] or "{}")
         self.assertFalse(cfg.get("offensive_agent", {}).get("enabled"))
+
+    def test_findings_expose_narrative_evidence(self):
+        store = SQLiteStore(self.db)
+        store.create_engagement("e1", "E1", {"in_scope_domains": ["e1.com"]},
+                                "e1.scope.json", "semi", {})
+        store.upsert_finding("e1", {"title": "SQLi", "severity": "high",
+            "source_tool": "agent-director",
+            "evidence": {"description": "blind SQLi", "reproduction": "curl X",
+                         "impact": "bypass", "remediation": "paramize"}})
+        st, _, body, _ = self._get("/api/findings", eng="e1")
+        row = json.loads(body)["findings"][0]
+        self.assertEqual(row["evidence"]["reproduction"], "curl X")
+        self.assertEqual(row["evidence"]["remediation"], "paramize")
+
+    def test_finding_screenshot_slot_round_trips(self):
+        store = SQLiteStore(self.db)
+        store.create_engagement("e1", "E1", {"in_scope_domains": ["e1.com"]},
+                                "e1.scope.json", "semi", {})
+        store.upsert_finding("e1", {"title": "X", "severity": "low", "evidence": {}})
+        fid = store.list_findings("e1")[0]["id"]
+        body = json.dumps({"findings": {str(fid): {"include": True, "screenshots": ["/tmp/a.png"]}}}).encode()
+        st, _, _, _ = self.app.handle("POST", "/api/report-settings", {"eng": "e1"}, body)
+        self.assertEqual(st, 200)
+        st, _, gb, _ = self.app.handle("GET", "/api/report-settings", {"eng": "e1"}, b"")
+        got = json.loads(gb)["findings"][str(fid)]["screenshots"]
+        self.assertEqual(got, ["/tmp/a.png"])
