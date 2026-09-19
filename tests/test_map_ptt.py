@@ -50,7 +50,7 @@ class MapPTTTest(unittest.TestCase):
 
     def test_enrich_degrades_when_reasoner_errors(self):
         class _Boom:
-            def reason(self, p, phase): raise RuntimeError("no provider")
+            def reason(self, p, phase, role=None): raise RuntimeError("no provider")
         # config asks for enrich; reasoner blows up -> rules-only, no crash
         self.store.create_engagement("E", "E", {}, "s.json", "full",
                                      {"map": {"enrich": True}})
