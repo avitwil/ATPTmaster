@@ -17,9 +17,10 @@ download a **PTES-compliant Markdown report** at the end.
   optional package and gracefully falls back to a browser window without it.
 - **Bring your own LLM** — hosted API key, an existing CLI login, or a local
   Ollama. Each operator uses their own keys; nothing proprietary is bundled.
-- **An offensive agent that learns** — opt in and the LLM drives the scan/exploit
-  loop itself, one command at a time, then distills each win into a reusable
-  **skill** it reaches for on the next target. Always scope-locked.
+- **An LLM Director runs the engagement by default** — it drives the scan/exploit
+  loop itself, one command at a time, authors each finding as a full write-up, and
+  distills each win into a reusable **skill** it reaches for on the next target. The
+  classic fixed pipeline is still one click away. Always scope-locked.
 
 > Only test systems you are **authorized** to test. Every intrusive step enforces
 > your engagement scope and, in `semi` mode, pauses for your approval.
@@ -74,7 +75,13 @@ attack-direction tree on the right**.
 1. **☰ → Scope → Target & scope.** Give it an id and name, put the box IP in
    **Target (IP or CIDR)**, and tick the domains in play (Infra for the IP, Web if
    there's a site). Each domain takes in-scope and out-of-scope lists — the scope
-   oracle enforces both before any intrusive tool touches a host.
+   oracle enforces both before any intrusive tool touches a host. Pick the
+   **Engine** for this engagement — **Director** (LLM drives it, default) or
+   **Classic pipeline** (the original fixed scan chain). Instead of filling the
+   fields yourself, you can also describe your scope in plain language to the
+   **scope agent**; it restates or completes it and writes it only after you
+   approve — the deterministic scope wall and startup confirmation still gate
+   every scan either way.
 
    ![Scope](docs/screenshots/settings-scope.png)
 
@@ -99,8 +106,9 @@ attack-direction tree on the right**.
   halt gracefully at the next module boundary (a running scanner finishes first).
   Intrusive steps still gate on approval in `semi` mode.
 - **Chat control** — `run` / `plan` / `status` / `approve <module>` / `report`.
-- **Findings** table and an **attack-direction tree** (grouped by domain, ranked
-  by severity).
+- **Findings** table — click a row to open its full write-up (what it is, how it
+  was proven, impact, remediation, confidence) plus any attached screenshots —
+  and an **attack-direction tree** (grouped by domain, ranked by severity).
 
 ## The ☰ menu
 
@@ -112,23 +120,41 @@ Everything is configured in the menu — no JSON editing:
   one, with one-click auto-install), *Local LLM* (Ollama), and *Models* (live-fetched
   per provider; a curated list for the subscription CLIs).
 - **Scope** — *Target & scope* (domain-typed: Infra / Web / API / AI / Cloud /
-  Mobile / Wireless, each with in/out-of-scope lists) and *CTF / engagement* (VPN
-  config, goals, attack-box).
+  Mobile / Wireless, each with in/out-of-scope lists — or chat with the **scope
+  agent**, which restates or elicits a scope and writes it only after you approve)
+  and *CTF / engagement* (VPN config, goals, attack-box).
 - **App settings** — *Mode* (`step` / `semi` / `full`), *Appearance* (light / dark /
   system, plus **Allow sudo** — password held in memory only), *Model ladder*
-  (ordered models each with an effort level), *Report* (include/exclude findings,
-  add notes and screenshots, then **Download**), and *Toolbox* (the offensive
-  agent's learned skills — view service tags and what worked, or delete one).
+  (one **global** ladder of ordered models, each with an effort level, plus optional
+  **per-role** overrides for director / OSINT / active recon / skill / scope / map /
+  exploit / report — any configured provider can serve any role, nothing is pinned
+  to a specific model), *Report* (include/exclude findings, add notes and
+  screenshots, then **Download**), and *Toolbox* (the offensive agent's learned
+  skills — view service tags and what worked, or delete one).
 
 Provider / model / user / sudo settings are global; scope, CTF and report settings
 attach to the selected engagement.
 
-## LLM offensive agent (opt-in)
+## The Director — the default engine
 
-Instead of the fixed scan chain, you can let the LLM **drive the scan/exploit loop
-per target** — it proposes one command at a time, reads the output, and decides
-the next, adapting to what it finds. Enable it in **☰ → Scope → CTF / engagement →
-LLM offensive agent** (per engagement).
+New engagements default to the **Director**: instead of a fixed scan chain, the LLM
+**drives the engagement itself** — proposing one command at a time, reading the
+output, and deciding what's next, adapting to what it finds. Pick **Classic
+pipeline** on the **Engine** toggle (**☰ → Scope → Target & scope**, at creation) to
+fall back to the original fixed scan chain instead; both engines share the same tool
+library and the same scope wall.
+
+**Recon runs in two phases.** A passive **OSINT** expert reasons only over context
+you provide for the engagement — for a TryHackMe/HackTheBox box that's the
+challenge-page text, since there's no public footprint to research — before
+**active recon** enumerates in-scope hosts, exactly as before.
+
+**Findings are authored, not just harvested.** When the Director concludes something
+is a real issue, it writes it up as a first-class **finding** — title, severity,
+what it is, how it was proven, impact, remediation, and its confidence — instead of
+a bare "asset found". That write-up is what the findings table's detail view and the
+downloaded report both draw from (see the next two sections). Automatic flag/asset
+harvesting stays as a safety net alongside it.
 
 It is supervised so it can **never leave scope**:
 
@@ -148,7 +174,30 @@ It is supervised so it can **never leave scope**:
 Discovered services and issues flow into the same map → validate → **PTES report**
 pipeline, and every win is distilled into a reusable skill — see the **Strategy
 Toolbox** below. See the design in
-[`docs/superpowers/specs/2026-09-18-llm-driven-offensive-agent-design.md`](docs/superpowers/specs/2026-09-18-llm-driven-offensive-agent-design.md).
+[`docs/superpowers/specs/2026-09-18-llm-driven-offensive-agent-design.md`](docs/superpowers/specs/2026-09-18-llm-driven-offensive-agent-design.md)
+and
+[`docs/superpowers/specs/2026-09-19-llm-director-and-rich-findings-design.md`](docs/superpowers/specs/2026-09-19-llm-director-and-rich-findings-design.md).
+
+## Findings — clickable detail + screenshots
+
+Every row in the **findings** table opens a **detail panel** with that finding's
+full write-up — description, how it was proven, impact, remediation, confidence,
+severity, status, OWASP/CVSS — plus an "Add screenshot" control. Screenshots are
+**operator-attached** (there's no auto-capture of target pages); the in-console
+panel lists the attached file(s) — inline image display over `http://127.0.0.1` is
+a known limitation — while the same screenshots render inline in the **downloaded
+PTES report**, since both draw from the one shared screenshot slot in **App
+settings → Report**.
+
+## PTES report — LLM-authored narrative, deterministic fallback
+
+The downloaded report's **Executive Summary** and **Methodology** are written by an
+LLM from the engagement's real run transcript — a narrative of what was actually
+done on *this* target, not boilerplate — while each finding's description,
+reproduction, impact and remediation come straight from the Director's write-up
+(see above). With no model configured, or if the ladder is exhausted, the report
+falls back to the original deterministic template — a PTES report is produced
+either way.
 
 ## Strategy Toolbox — the agent learns from its wins
 
