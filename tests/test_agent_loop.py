@@ -162,6 +162,18 @@ class LoopTest(unittest.TestCase):
         self.assertEqual(len(findings), 0)                    # rejected, not crashed
         self.assertIn("done", summary.lower())
 
+    def test_intel_seeds_transcript(self):
+        seen = {}
+        def rf(prompt):
+            seen["p"] = prompt
+            return '{"done": true}'
+        run_loop(goal="x", guard=guard(), reason_fn=rf, max_steps=1,
+                 emit=lambda *a, **k: None,
+                 execute_fn=lambda a, timeout=300: {"rc": 0, "out": "", "err": ""},
+                 harvest_fn=lambda a, r: ([], []), intel="target runs WordPress 6.1")
+        self.assertIn("OSINT INTEL", seen["p"])
+        self.assertIn("WordPress 6.1", seen["p"])
+
 
 class LoopToolboxInjectTest(unittest.TestCase):
     def test_playbook_hint_injected_after_service_discovered(self):

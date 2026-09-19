@@ -122,5 +122,27 @@ class ModuleToolboxTest(unittest.TestCase):
         self.assertEqual(json.loads(files[0].read_text())["name"], "nmap-open")
 
 
+class OsintSummaryTest(unittest.TestCase):
+    def test_osint_summary_uses_context_and_osint_role(self):
+        import json
+        from modules.agent_offensive.module import _osint_summary
+
+        class _Ctx:
+            engagement = {"id": "e", "config": json.dumps(
+                {"osint": {"context": "Challenge page: login form, hint admin/admin"}})}
+            scope = {"in_scope_domains": ["t.com"]}
+            goals = "capture flags"
+            def reason(self, prompt, phase, role=None):
+                self.seen = (phase, role, prompt)
+                return "LEAD: try admin/admin on the login form"
+
+        ctx = _Ctx(); events = []
+        out = _osint_summary(ctx, lambda *a, **k: events.append(a))
+        self.assertIn("admin/admin", out)
+        self.assertEqual(ctx.seen[0], "recon")
+        self.assertEqual(ctx.seen[1], "osint")
+        self.assertIn("Challenge page", ctx.seen[2])
+
+
 if __name__ == "__main__":
     unittest.main()

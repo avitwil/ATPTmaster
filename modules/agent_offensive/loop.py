@@ -77,9 +77,11 @@ def _build_playbook(hints):
 
 
 def run_loop(*, goal, guard, reason_fn, max_steps, emit, execute_fn, harvest_fn,
-             scope=None, halt_fn=lambda: False, toolbox=None, distill_fn=None):
+             scope=None, halt_fn=lambda: False, toolbox=None, distill_fn=None, intel=""):
     scope = scope or {}
     assets, findings, transcript = [], [], []
+    if intel:
+        transcript.append(f"OSINT INTEL (passive recon):\n{intel}")
     playbook, _svc_sig = "", None
     if toolbox is not None:
         try:

@@ -13,6 +13,32 @@ from .loop import run_loop
 from .executor import execute, harvest
 
 
+_OSINT_PROMPT = (
+    "You are an OSINT / passive-reconnaissance expert. Using ONLY the context below "
+    "(do not probe the target), summarise what is publicly known that helps the "
+    "engagement goal: technologies, versions, endpoints, usernames/emails, credentials, "
+    "and likely weak points. Be concise. If the context is a CTF challenge page, extract "
+    "EVERY hint.\n\nGoal: {goal}\nIn-scope: {scope}\n\nContext:\n{context}\n")
+
+
+def _osint_summary(ctx, emit) -> str:
+    """Passive OSINT expert phase, run before the active loop. Reasons only over
+    operator-supplied context (config.osint.context; for a CTF box, the pasted
+    challenge-page text/URL) — never probes the target. Degrades to an empty
+    summary (no reasoner call) when there is no context, and to "" (no crash)
+    when there is no reasoner."""
+    cfg = (json.loads(ctx.engagement.get("config") or "{}").get("osint") or {})
+    context = str(cfg.get("context") or "").strip()
+    if not context:
+        return ""
+    text = (ctx.reason(_OSINT_PROMPT.format(
+        goal=ctx.goals or "(none stated)", scope=json.dumps(ctx.scope), context=context),
+        "recon", role="osint") or "").strip()
+    if text:
+        emit("agent_osint", f"[agent] OSINT (passive recon) summary ({len(text)} chars)")
+    return text
+
+
 def _substitutions(scope: dict) -> dict:
     """Map concrete in-scope single hosts to {TARGET} so distilled steps generalise."""
     subs = {}
@@ -56,12 +82,13 @@ class AgentOffensive(Module):
                            reason_fn=lambda p: ctx.reason(p, "exploit", role="skill"),
                            substitutions=subs, provenance=prov)
 
+        intel = _osint_summary(ctx, emit)
         assets, findings, summary = run_loop(
             goal=ctx.goals or "Capture the flags on the in-scope target(s).",
             guard=guard, scope=ctx.scope,
             reason_fn=lambda p: ctx.reason(p, "exploit", role="director"),
             max_steps=max_steps, emit=emit,
             execute_fn=lambda argv: execute(argv, timeout=step_timeout),
-            harvest_fn=harvest, toolbox=toolbox, distill_fn=distill_fn)
+            harvest_fn=harvest, toolbox=toolbox, distill_fn=distill_fn, intel=intel)
         emit("agent_done", f"[agent] {summary}", data={"assets": len(assets)})
         return ModuleResult(assets=assets, findings=findings, summary=summary, ok=True)
