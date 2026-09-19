@@ -26,13 +26,14 @@ download a **PTES-compliant Markdown report** at the end.
 
 ## Install
 
-Python ≥ 3.10, stdlib only. **One-line install:**
+Python ≥ 3.10, stdlib only. The one-liner installs the **latest official release**
+(stable `vX.Y.Z` tags only — betas are skipped):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/avitwil/ATPTmaster/main/bootstrap.sh | bash
 ```
 
-Or clone it yourself:
+Or clone it yourself (add `--branch <vX.Y.Z>` to pin a release):
 
 ```bash
 git clone https://github.com/avitwil/ATPTmaster.git atpt && cd atpt && ./install.sh
@@ -41,6 +42,10 @@ git clone https://github.com/avitwil/ATPTmaster.git atpt && cd atpt && ./install
 The installer puts an `atpt` launcher on your PATH **and adds an ATPTmaster
 desktop icon** to your app grid. Add the optional scanners any time with
 `./install.sh --with-tools`.
+
+**Updating is one click** — **☰ → App settings → Update** installs the latest
+stable release and keeps all your data (engagements, reports, learned skills).
+Beta / pre-release tags are never auto-installed.
 
 ## Launch the app
 

@@ -1478,12 +1478,12 @@ async function checkUpdate(){
   $('#upd_status').textContent='checking…'; $('#upd_result').textContent='';
   const r=await api('/api/update/check');
   if(r.repo===false||r.error){ $('#upd_status').textContent='⚠ '+esc(r.error||'not a git checkout'); $('#upd_log').innerHTML=''; $('#upd_apply').classList.add('hidden'); return; }
-  if(r.behind>0){
-    $('#upd_status').innerHTML='<b>'+r.behind+'</b> update'+(r.behind>1?'s':'')+' available &nbsp;<span class=hint>'+esc(r.current)+' → '+esc(r.latest)+' ('+esc(r.branch)+')</span>';
-    $('#upd_log').innerHTML='<div class=hint>Changelog:</div><pre class=out>'+r.changelog.map(esc).join('\n')+'</pre>';
+  if(r.update_available){
+    $('#upd_status').innerHTML='<b>update available</b> &nbsp;<span class=hint>'+esc(r.current||'(unversioned)')+' → '+esc(r.latest)+'</span>';
+    $('#upd_log').innerHTML='<div class=hint>What\'s new in '+esc(r.latest)+' (latest stable release):</div><pre class=out>'+(r.changelog||[]).map(esc).join('\n')+'</pre>';
     $('#upd_apply').classList.remove('hidden');
   } else {
-    $('#upd_status').innerHTML='✓ up to date <span class=hint>('+esc(r.current)+', '+esc(r.branch)+')</span>'+(r.fetch_error?' <span class=warn>— fetch: '+esc(r.fetch_error)+'</span>':'');
+    $('#upd_status').innerHTML='✓ up to date <span class=hint>('+esc(r.current||r.latest||'—')+')</span>'+(r.note?' <span class=hint>— '+esc(r.note)+'</span>':'');
     $('#upd_log').innerHTML=''; $('#upd_apply').classList.add('hidden');
   }
 }
@@ -1491,7 +1491,7 @@ $('#upd_check')&&($('#upd_check').onclick=checkUpdate);
 $('#upd_apply')&&($('#upd_apply').onclick=async()=>{
   $('#upd_result').textContent='updating…';
   const r=await api('/api/update/apply',{method:'POST'});
-  if(r.ok){ $('#upd_result').innerHTML='✓ updated — <b>restart the console</b> to apply (Ctrl-C, then <code>python3 -m atpt serve</code>).<pre class=out>'+esc(r.output||'')+'</pre>'; checkUpdate(); }
+  if(r.ok){ $('#upd_result').innerHTML='✓ updated to <b>'+esc(r.tag||'latest')+'</b> — <b>restart the console</b> to apply (Ctrl-C, then <code>python3 -m atpt serve</code>).<pre class=out>'+esc(r.output||'')+'</pre>'; checkUpdate(); }
   else { $('#upd_result').innerHTML='⚠ '+esc(r.output||r.error||'update failed')+'<pre class=out>'+esc(r.output||'')+'</pre>'; }
 });
 document.querySelectorAll('.nav').forEach(b=>b.onclick=()=>{if(['providers','subs','ollama','ladder','models'].includes(b.dataset.tab))syncFromDom();showTab(b.dataset.tab);});
