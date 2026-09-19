@@ -26,6 +26,34 @@ def _is_refusal(text: str) -> bool:
     return any(m in t for m in REFUSAL_MARKERS)
 
 
+ERROR_MARKERS = (
+    "rate limit", "rate-limited", "rate limited", "model unavailable",
+    "not available", "not on your plan", "quota", "insufficient_quota",
+    "overloaded", "service unavailable", "try again later",
+    "flagged for possible cybersecurity risk", "trusted access for cyber",
+    "you do not have access", "no access to",
+)
+_ERR_MAX = 240  # only SHORT responses are judged error-shaped by phrase
+
+
+def _looks_like_error(text: str) -> bool:
+    """True when a process-level success (exit 0 / HTTP 200) actually carried an
+    error or unrecognized refusal AS its text. Guarded so a valid long answer — or
+    a finding that merely mentions 'rate limit' — is never discarded."""
+    t = (text or "").strip()
+    if not t:
+        return False  # empty is handled by _is_refusal
+    try:
+        obj = json.loads(t)
+        if isinstance(obj, dict) and obj.get("error"):
+            return True
+    except Exception:
+        pass
+    if len(t) <= _ERR_MAX and any(m in t.lower() for m in ERROR_MARKERS):
+        return True
+    return False
+
+
 def _extract_text(data: dict) -> str:
     if isinstance(data, dict):
         if "response" in data:
@@ -51,6 +79,8 @@ def _backend_cli(cfg: dict, prompt: str) -> str:
                           text=True, timeout=cfg.get("timeout", 120))
     if proc.returncode != 0:
         raise RuntimeError(f"cli exit {proc.returncode}: {proc.stderr[-200:]}")
+    if not proc.stdout.strip() and proc.stderr.strip():
+        raise RuntimeError(f"cli exit 0 but empty stdout; stderr: {proc.stderr[-200:]}")
     return proc.stdout
 
 
@@ -86,7 +116,10 @@ def _backend_http_api(cfg: dict, prompt: str) -> str:
             body["reasoning_effort"] = effort
     req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers)
     with urllib.request.urlopen(req, timeout=cfg.get("timeout", 120)) as resp:
-        return _extract_text(json.loads(resp.read().decode()))
+        data = json.loads(resp.read().decode())
+    if isinstance(data, dict) and data.get("error"):
+        raise RuntimeError(f"api error: {str(data['error'])[:200]}")
+    return _extract_text(data)
 
 
 def _backend_ollama(cfg: dict, prompt: str) -> str:
@@ -155,6 +188,11 @@ class ReasoningLadder:
                 continue
             if _is_refusal(text):
                 self._emit("reasoning_refused", f"provider '{provider}' refused; advancing", "info")
+                continue
+            if _looks_like_error(text):
+                self._emit("reasoning_error",
+                           f"provider '{provider}' returned an error-shaped response; advancing",
+                           "warn")
                 continue
             return ReasoningResult(text=text, provider=provider)
         return None

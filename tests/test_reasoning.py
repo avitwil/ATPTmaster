@@ -73,3 +73,37 @@ class ReasoningLadderTest(unittest.TestCase):
         self.assertTrue(_is_refusal(""))
         self.assertTrue(_is_refusal("I'm unable to help"))
         self.assertFalse(_is_refusal("Sure, here are the findings"))
+
+    def test_error_as_text_with_exit0_advances(self):
+        calls = []
+        def fake(cfg, p):
+            calls.append(1)
+            return "Model unavailable — you are rate-limited. Try again later." \
+                if len(calls) == 1 else "RECOVERED"
+        self._install(fake)
+        res = ReasoningLadder(CFG).reason("hi", "map")
+        self.assertEqual(res.text, "RECOVERED")
+        self.assertEqual(res.provider, "p2")
+
+    def test_json_error_envelope_advances(self):
+        calls = []
+        def fake(cfg, p):
+            calls.append(1)
+            return '{"error":{"message":"insufficient_quota"}}' \
+                if len(calls) == 1 else "RECOVERED"
+        self._install(fake)
+        self.assertEqual(ReasoningLadder(CFG).reason("hi", "map").text, "RECOVERED")
+
+    def test_valid_short_answer_is_not_an_error(self):
+        self._install(lambda cfg, p: "22/tcp open ssh")
+        res = ReasoningLadder(CFG).reason("hi", "map")
+        self.assertEqual(res.text, "22/tcp open ssh")
+        self.assertEqual(res.provider, "p1")
+
+    def test_long_answer_containing_marker_is_not_an_error(self):
+        # A real finding legitimately mentions "rate limit" — a long response must
+        # never be discarded as error-shaped.
+        long = "Finding: the login endpoint has no rate limiting, so credential " \
+               "stuffing is possible. " + ("Details. " * 40)
+        self._install(lambda cfg, p: long)
+        self.assertEqual(ReasoningLadder(CFG).reason("hi", "map").text, long)
