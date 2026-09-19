@@ -879,6 +879,9 @@ button:hover{filter:brightness(1.1)}button:disabled{opacity:.5;cursor:not-allowe
 .msg.me{align-self:flex-end;background:#1f6feb33;border:1px solid #1f6feb55}
 .msg.sys{align-self:flex-start;background:var(--field);border:1px solid var(--edge)}
 .msg.ev{align-self:stretch;background:transparent;border:0;color:var(--mut);font-family:ui-monospace,monospace;font-size:12px;padding:2px 4px}
+.msg.user{align-self:flex-end;background:#1f6feb33;border:1px solid #1f6feb55}
+.msg.assistant{align-self:flex-start;background:var(--field);border:1px solid var(--edge)}
+.chat{display:flex;flex-direction:column;gap:8px}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .chatbar{display:flex;gap:8px;margin-top:8px}.chatbar input{flex:1}
 table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--edge);vertical-align:top}
@@ -1045,6 +1048,13 @@ pre.out{background:var(--field);border:1px solid var(--edge);border-radius:6px;p
           <div class="row" style="margin-top:10px">
             <button id="createbtn">Create / update engagement</button>
             <span class="hint" id="createmsg"></span>
+          </div>
+          <div class="hint" style="margin-top:14px">Or describe your scope in plain language — the scope agent will restate it (or ask for what's missing) before anything is written:</div>
+          <div id="scope_chat" class="chat" style="max-height:220px;overflow:auto;margin-top:6px"></div>
+          <div class="row">
+            <input id="scope_msg" placeholder="Describe or confirm your scope…" style="flex:1">
+            <button id="scope_send">Send</button>
+            <button id="scope_apply" class="ghost">Approve &amp; write scope</button>
           </div>
         </div>
         <div class="panel hidden" data-panel="ctf">
@@ -1326,6 +1336,46 @@ async function loadScope(){
   }catch(e){} }
   renderScope();
 }
+
+/* ---- scope-agent chat: Mode A restates a typed scope, Mode B elicits one ---- */
+let SCOPE_MSGS=[], SCOPE_PROPOSED=null;
+function scopeFormFilled(){
+  if(($('#f_target').value||'').trim()) return true;
+  const rows=$('#scopeDomains')?[...$('#scopeDomains').querySelectorAll('.prow')]:[];
+  return rows.some(row=>{
+    const on=row.querySelector('.d_on'); const inv=row.querySelector('.d_in');
+    return on&&on.checked&&inv&&inv.value.trim();
+  });
+}
+function currentTypedScope(){ return scopeFormFilled()?collectScope():null; }
+function renderScopeChat(){ $('#scope_chat').innerHTML=SCOPE_MSGS.map(m=>
+  `<div class="msg ${esc(m.role)}">${esc(m.text)}</div>`).join(''); $('#scope_chat').scrollTop=1e9; }
+async function scopeSend(){
+  if(!ENG) return;
+  const t=$('#scope_msg').value.trim(); if(t){ SCOPE_MSGS.push({role:'user',text:t}); }
+  $('#scope_msg').value=''; renderScopeChat();
+  const r=await api('/api/scope/chat?eng='+encodeURIComponent(ENG),{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({typed_scope:currentTypedScope(),messages:SCOPE_MSGS})});
+  if(r.reply){ SCOPE_MSGS.push({role:'assistant',text:r.reply}); }
+  if(r.proposed_scope){ SCOPE_PROPOSED=r.proposed_scope; }
+  renderScopeChat();
+}
+async function scopeApply(){
+  if(!ENG) return;
+  const scope=SCOPE_PROPOSED||currentTypedScope();
+  if(!scope){ SCOPE_MSGS.push({role:'assistant',text:'No scope to write yet — describe it first.'}); renderScopeChat(); return; }
+  const r=await api('/api/scope/apply?eng='+encodeURIComponent(ENG),{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({scope})});
+  if(r.error){ SCOPE_MSGS.push({role:'assistant',text:'⚠ '+r.error}); renderScopeChat(); return; }
+  SCOPE_PROPOSED=null;
+  SCOPE_MSGS.push({role:'assistant',text:'Scope written. It will be confirmed again before scanning starts.'});
+  renderScopeChat(); loadScope();
+}
+$('#scope_send')&&($('#scope_send').onclick=scopeSend);
+$('#scope_msg')&&($('#scope_msg').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();scopeSend();}}));
+$('#scope_apply')&&($('#scope_apply').onclick=scopeApply);
+
 $('#createbtn').onclick=async()=>{
   const scope=collectScope();
   const r=await api('/api/engagement',{method:'POST',headers:{'Content-Type':'application/json'},
