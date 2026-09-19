@@ -24,6 +24,7 @@ from .config import offensive_agent_on
 from .engine import Orchestrator
 from .registry import discover
 from .state import SQLiteStore
+from .toolbox import Toolbox
 
 _SEV_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
 # Background run control (stop-between-steps). eid -> {halt: Event, status, last}.
@@ -416,6 +417,13 @@ class WebApp:
             return self._provider_install(data)
         if path == "/api/providers/login" and method == "POST":
             return self._provider_login(data)
+        if path == "/api/toolbox":
+            tb = Toolbox(self.project_dir / "toolbox")
+            if method == "GET":
+                return self._json(200, {"skills": tb.list_skills()})
+            if method == "DELETE":
+                return self._json(200, {"deleted": tb.delete(query.get("name") or "")})
+            return self._json(405, {"error": "GET or DELETE"})
 
         eid = query.get("eng") or data.get("eng")
         if path.startswith("/api/") and not eid:
@@ -772,6 +780,9 @@ def make_server(project_dir, port=8787, host="127.0.0.1"):
         def do_POST(self):
             self._do("POST")
 
+        def do_DELETE(self):
+            self._do("DELETE")
+
         def log_message(self, *a):
             pass
 
@@ -928,6 +939,7 @@ pre.out{background:var(--field);border:1px solid var(--edge);border-radius:6px;p
         <button class="nav" data-tab="report">Report</button>
         <button class="nav" data-tab="backup">Backup</button>
         <button class="nav" data-tab="update">Update</button>
+        <button class="nav" data-tab="toolbox">Toolbox</button>
       </nav>
       <div class="panels">
         <div class="panel" data-panel="userinfo">
@@ -1064,6 +1076,12 @@ pre.out{background:var(--field);border:1px solid var(--edge);border-radius:6px;p
           <div id="upd_log" style="margin-top:8px"></div>
           <button id="upd_apply" class="hidden" style="margin-top:8px">⬇ Update now</button>
           <div class="hint" id="upd_result" style="margin-top:6px"></div>
+        </div>
+        <div class="panel hidden" data-panel="toolbox">
+          <div class="hint">Strategy Toolbox — skills the agent distilled from successful runs.
+            They only <i>suggest</i> commands; every command is still scope-checked at execution
+            time. Files live in <code>toolbox/</code> and are hand-editable.</div>
+          <ul class="ladder" id="tbList"></ul>
         </div>
       </div>
     </div>
@@ -1496,6 +1514,7 @@ async function openSettings(tab){
   $('#a_mode').value=MODE;
   renderProviders();renderLadder();
   await loadCtf();
+  await loadToolbox();
   showTab(tab||'userinfo');
   $('#settings').classList.remove('hidden');
 }
@@ -1556,6 +1575,23 @@ $('#ctfSave').onclick=async()=>{
   if(r.error){$('#ctfMsg').textContent='⚠ '+r.error;return;}
   $('#c_ab_pw').value='';$('#ctfMsg').textContent='Saved ✓';setTimeout(()=>$('#ctfMsg').textContent='',1500);
 };
+
+/* ---- strategy toolbox (learned skills) ---- */
+function renderToolbox(skills){
+  $('#tbList').innerHTML=(skills||[]).map(s=>{
+    const tags=((s.applies_to&&s.applies_to.service_tags)||[]).map(t=>`<span class="badge">${esc(t)}</span>`).join(' ');
+    return `<li><span class="nm"><b>${esc(s.name)}</b> ${tags}<br><span class="hint">${esc(s.success_note||'')}</span></span>
+      <button class="ghost tb_del" data-name="${esc(s.name)}">✕</button></li>`;
+  }).join('')||'<div class="hint">No skills yet — run the agent to a win.</div>';
+  $('#tbList').querySelectorAll('.tb_del').forEach(b=>b.onclick=async()=>{
+    await api('/api/toolbox?name='+encodeURIComponent(b.dataset.name),{method:'DELETE'});
+    loadToolbox();
+  });
+}
+async function loadToolbox(){
+  const {skills}=await api('/api/toolbox');
+  renderToolbox(skills);
+}
 
 /* ---- file picker (upload -> server path) + background VPN ---- */
 function fileToB64(file){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(file);});}
